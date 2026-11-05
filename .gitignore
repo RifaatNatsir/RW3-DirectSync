@@ -1,0 +1,9 @@
+# Local Android/Gradle state
+.gradle/
+**/build/
+local.properties
+.idea/
+*.iml
+*.jks
+*.keystore
+__pycache__/

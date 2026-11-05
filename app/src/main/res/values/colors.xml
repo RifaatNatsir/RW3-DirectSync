@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark Surface & Backgrounds matching Google Stitch HTML -->
+    <color name="surface_dark">#0B1326</color>
+    <color name="surface_container">#171F33</color>
+    <color name="surface_container_high">#222A3D</color>
+    <color name="surface_container_highest">#2D3449</color>
+    <color name="surface_container_low">#131B2E</color>
+    <color name="surface_container_lowest">#060E20</color>
+
+    <!-- Accents & Text -->
+    <color name="on_surface">#FFFFFF</color>
+    <color name="on_surface_variant">#94A3B8</color>
+    <color name="on_surface_muted">#64748B</color>
+
+    <!-- Vibrant Branding & Functional Colors -->
+    <color name="primary_mint">#4EDEA3</color>
+    <color name="primary_emerald">#10B981</color>
+    <color name="on_primary">#FFFFFF</color>
+
+    <!-- High-Contrast Button Colors -->
+    <color name="btn_emerald_bg">#059669</color>
+    <color name="btn_emerald_stroke">#34D399</color>
+    <color name="btn_emerald_text">#FFFFFF</color>
+
+    <color name="btn_dark_bg">#1E293B</color>
+    <color name="btn_dark_stroke">#475569</color>
+    <color name="btn_dark_text">#FFFFFF</color>
+
+    <color name="btn_coral_bg">#BE123C</color>
+    <color name="btn_coral_stroke">#FB7185</color>
+    <color name="btn_coral_text">#FFFFFF</color>
+
+    <color name="btn_cyan_bg">#0369A1</color>
+    <color name="btn_cyan_stroke">#38BDF8</color>
+    <color name="btn_cyan_text">#FFFFFF</color>
+
+    <color name="btn_danger_bg">#881337</color>
+    <color name="btn_danger_stroke">#F43F5E</color>
+    <color name="btn_danger_text">#FFFFFF</color>
+
+    <color name="secondary_cyan">#4CD7F6</color>
+    <color name="heart_rate_coral">#FF7A73</color>
+    <color name="heart_rate_coral_bg">#3D1E22</color>
+
+    <!-- Sleep Stage Architecture Colors -->
+    <color name="sleep_deep">#6366F1</color>
+    <color name="sleep_light">#38BDF8</color>
+    <color name="sleep_rem">#A855F7</color>
+    <color name="sleep_awake">#F59E0B</color>
+
+    <color name="outline_subtle">#334155</color>
+</resources>
