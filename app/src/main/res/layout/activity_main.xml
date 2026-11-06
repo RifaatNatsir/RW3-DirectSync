@@ -452,6 +452,65 @@
                             android:background="@drawable/bg_button_emerald"
                             app:backgroundTint="@null" />
                     </LinearLayout>
+
+                    <!-- Whitelist Filter Status & Entry Row -->
+                    <LinearLayout
+                        android:id="@+id/btnFilterApps"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:background="@drawable/bg_subcard"
+                        android:padding="10dp"
+                        android:layout_marginTop="10dp"
+                        android:clickable="true"
+                        android:focusable="true">
+
+                        <FrameLayout
+                            android:layout_width="32dp"
+                            android:layout_height="32dp"
+                            android:background="@drawable/bg_chip">
+                            <ImageView
+                                android:layout_width="16dp"
+                                android:layout_height="16dp"
+                                android:layout_gravity="center"
+                                android:src="@drawable/ic_filter_list"
+                                app:tint="@color/primary_mint" />
+                        </FrameLayout>
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical"
+                            android:layout_marginStart="10dp">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Filter Aplikasi (Whitelist)"
+                                android:textSize="12sp"
+                                android:textStyle="bold"
+                                android:textColor="@color/on_surface" />
+
+                            <TextView
+                                android:id="@+id/tvWhitelistSummary"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Whitelist Aktif: 13 aplikasi diizinkan"
+                                android:textSize="11sp"
+                                android:textColor="@color/on_surface_variant" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Atur ›"
+                            android:textSize="12sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/primary_mint"
+                            android:paddingHorizontal="6dp" />
+                    </LinearLayout>
                 </LinearLayout>
 
                 <!-- 2. DETAK JANTUNG LANGSUNG (Hero Card) -->

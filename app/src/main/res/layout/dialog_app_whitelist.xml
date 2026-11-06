@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:background="@color/surface_container">
+
+    <!-- Header Section -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <FrameLayout
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:background="@drawable/bg_chip">
+            <ImageView
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_filter_list"
+                app:tint="@color/primary_mint" />
+        </FrameLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:layout_marginStart="10dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Filter Notifikasi Aplikasi"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:textColor="@color/on_surface" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Hanya aplikasi terpilih yang diteruskan ke jam"
+                android:textSize="11sp"
+                android:textColor="@color/on_surface_variant" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Master Whitelist Switch Box -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/bg_subcard"
+        android:padding="12dp"
+        android:layout_marginTop="12dp">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Gunakan Filter Whitelist"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:textColor="@color/on_surface" />
+
+            <TextView
+                android:id="@+id/tvSwitchHint"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Jika aktif, notifikasi aplikasi lain akan diblokir"
+                android:textSize="11sp"
+                android:textColor="@color/on_surface_variant" />
+        </LinearLayout>
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/switchWhitelistMode"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            app:thumbTint="@color/primary_mint"
+            app:trackTint="@color/surface_container_highest" />
+    </LinearLayout>
+
+    <!-- Search Input -->
+    <EditText
+        android:id="@+id/etSearchApp"
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:layout_marginTop="10dp"
+        android:background="@drawable/bg_subcard"
+        android:drawableStart="@drawable/ic_radar"
+        android:drawablePadding="8dp"
+        android:hint="Cari aplikasi terinstall..."
+        android:textColorHint="@color/on_surface_muted"
+        android:textColor="@color/on_surface"
+        android:textSize="12sp"
+        android:paddingHorizontal="10dp"
+        android:singleLine="true"
+        android:imeOptions="actionSearch" />
+
+    <!-- Shortcut Preset Buttons -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="8dp">
+
+        <Button
+            android:id="@+id/btnPresetChat"
+            android:layout_width="0dp"
+            android:layout_height="32dp"
+            android:layout_weight="1"
+            android:text="Chat &amp; Pesan"
+            android:textSize="11sp"
+            android:textColor="@color/primary_mint"
+            android:background="@drawable/bg_chip"
+            app:backgroundTint="@null"
+            android:padding="0dp"
+            android:layout_marginEnd="4dp" />
+
+        <Button
+            android:id="@+id/btnSelectAll"
+            android:layout_width="0dp"
+            android:layout_height="32dp"
+            android:layout_weight="1"
+            android:text="Pilih Semua"
+            android:textSize="11sp"
+            android:textColor="@color/on_surface"
+            android:background="@drawable/bg_chip"
+            app:backgroundTint="@null"
+            android:padding="0dp"
+            android:layout_marginEnd="4dp" />
+
+        <Button
+            android:id="@+id/btnClearAll"
+            android:layout_width="0dp"
+            android:layout_height="32dp"
+            android:layout_weight="1"
+            android:text="Kosongkan"
+            android:textSize="11sp"
+            android:textColor="@color/heart_rate_coral"
+            android:background="@drawable/bg_chip"
+            app:backgroundTint="@null"
+            android:padding="0dp" />
+    </LinearLayout>
+
+    <!-- Counter Summary -->
+    <TextView
+        android:id="@+id/tvSelectedCount"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="0 aplikasi dipilih"
+        android:textSize="11sp"
+        android:textColor="@color/secondary_cyan"
+        android:layout_marginTop="6dp" />
+
+    <!-- Loading State -->
+    <LinearLayout
+        android:id="@+id/layoutLoading"
+        android:layout_width="match_parent"
+        android:layout_height="220dp"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <ProgressBar
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:indeterminateTint="@color/primary_mint" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Memuat daftar aplikasi..."
+            android:textSize="12sp"
+            android:textColor="@color/on_surface_variant"
+            android:layout_marginTop="8dp" />
+    </LinearLayout>
+
+    <!-- App RecyclerView -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rvApps"
+        android:layout_width="match_parent"
+        android:layout_height="320dp"
+        android:layout_marginTop="6dp"
+        android:visibility="gone"
+        android:scrollbars="vertical" />
+
+</LinearLayout>
+

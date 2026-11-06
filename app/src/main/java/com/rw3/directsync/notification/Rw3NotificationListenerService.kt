@@ -25,6 +25,27 @@ class Rw3NotificationListenerService : NotificationListenerService() {
         private const val PREFS_NAME = "rw3_prefs"
         private const val PREF_NOTIF_FORWARDING_ENABLED = "pref_notif_forwarding_enabled"
         private const val PREF_CALL_FORWARDING_ENABLED = "pref_call_forwarding_enabled"
+        const val PREF_WHITELIST_MODE_ENABLED = "pref_notif_whitelist_mode_enabled"
+        const val PREF_WHITELISTED_PACKAGES = "pref_notif_whitelisted_packages"
+
+        // Default whitelist includes popular messaging, chat, email, and social apps in Indonesia
+        val DEFAULT_WHITELIST: Set<String> = setOf(
+            "com.whatsapp",
+            "com.whatsapp.w4b",                   // WhatsApp Business
+            "org.telegram.messenger",
+            "org.telegram.plus",
+            "com.google.android.apps.messaging",  // Google Messages
+            "com.android.mms",                    // SMS
+            "com.google.android.gm",              // Gmail
+            "com.instagram.android",              // Instagram
+            "com.discord",                        // Discord
+            "com.twitter.android",                // Twitter / X
+            "com.x.android",
+            "com.facebook.orca",                  // Messenger
+            "jp.naver.line.android",              // LINE
+            "com.google.android.dialer",          // Dialer / Calls
+            "com.android.dialer"
+        )
 
         // Deduplication cache: avoids spamming the watch when an app rapidly updates the same notification
         private val recentNotifications = LruCache<String, Long>(64)
@@ -72,6 +93,36 @@ class Rw3NotificationListenerService : NotificationListenerService() {
                 .putBoolean(PREF_CALL_FORWARDING_ENABLED, enabled)
                 .apply()
         }
+
+        fun isWhitelistModeEnabled(context: Context): Boolean {
+            val sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            return sp.getBoolean(PREF_WHITELIST_MODE_ENABLED, true)
+        }
+
+        fun setWhitelistModeEnabled(context: Context, enabled: Boolean) {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(PREF_WHITELIST_MODE_ENABLED, enabled)
+                .apply()
+        }
+
+        fun getWhitelistedPackages(context: Context): Set<String> {
+            val sp = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            return sp.getStringSet(PREF_WHITELISTED_PACKAGES, null) ?: DEFAULT_WHITELIST
+        }
+
+        fun setWhitelistedPackages(context: Context, packages: Set<String>) {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putStringSet(PREF_WHITELISTED_PACKAGES, HashSet(packages))
+                .apply()
+        }
+
+        fun isPackageAllowed(context: Context, packageName: String): Boolean {
+            if (!isWhitelistModeEnabled(context)) return true
+            val allowed = getWhitelistedPackages(context)
+            return allowed.contains(packageName)
+        }
     }
 
     override fun onListenerConnected() {
@@ -111,6 +162,10 @@ class Rw3NotificationListenerService : NotificationListenerService() {
             if (!isCallForwardingEnabled(this)) return
         } else {
             if (!isNotificationForwardingEnabled(this)) return
+            if (!isPackageAllowed(this, pkgName)) {
+                Log.d(TAG, "Notifikasi dari '$pkgName' diabaikan (tidak ada dalam whitelist).")
+                return
+            }
         }
 
         // 5. Extract Title & Body cleanly

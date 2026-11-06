@@ -12,13 +12,18 @@ import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.text.Editable
 import android.text.InputFilter
 import android.text.InputType
+import android.text.TextWatcher
 import android.view.Gravity
+import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewGroup
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -34,13 +39,19 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.rw3.directsync.R
 import com.rw3.directsync.ble.BleSyncService
 import com.rw3.directsync.data.db.entity.ActivityRecordEntity
 import com.rw3.directsync.databinding.ActivityMainBinding
+import com.rw3.directsync.databinding.DialogAppWhitelistBinding
+import com.rw3.directsync.databinding.ItemWhitelistAppBinding
 import com.rw3.directsync.notification.Rw3NotificationListenerService
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -168,6 +179,16 @@ class MainActivity : AppCompatActivity() {
             binding.btnNotificationPermission.text = "Aktifkan Izin"
             binding.tvNotificationDescription.text = "Akses Notifikasi Android belum diberikan. Ketuk 'Aktifkan Izin' agar jam tangan dapat menerima notifikasi HP."
         }
+
+        val isWhitelistMode = Rw3NotificationListenerService.isWhitelistModeEnabled(this)
+        val whitelistedCount = Rw3NotificationListenerService.getWhitelistedPackages(this).size
+        if (isWhitelistMode) {
+            binding.tvWhitelistSummary.text = "Whitelist Aktif: $whitelistedCount aplikasi diizinkan"
+            binding.tvWhitelistSummary.setTextColor(ContextCompat.getColor(this, R.color.primary_mint))
+        } else {
+            binding.tvWhitelistSummary.text = "Semua Aplikasi Diizinkan (Whitelist Mati)"
+            binding.tvWhitelistSummary.setTextColor(ContextCompat.getColor(this, R.color.on_surface_variant))
+        }
     }
 
     override fun onStart() {
@@ -234,6 +255,10 @@ class MainActivity : AppCompatActivity() {
             } else {
                 Toast.makeText(this, "Hubungkan jam terlebih dahulu via tombol 'Hubungkan'.", Toast.LENGTH_LONG).show()
             }
+        }
+
+        binding.btnFilterApps.setOnClickListener {
+            showAppWhitelistDialog()
         }
 
         // Card 7: Sync Semua Data (Sleep, Workouts, Activities, Battery)
@@ -1006,6 +1031,12 @@ class MainActivity : AppCompatActivity() {
             setTextColor(Color.parseColor("#E2E8F0"))
             textSize = 13f
         }
+        val cbWhitelistMode = CheckBox(this).apply {
+            text = "Gunakan Filter Whitelist (Hanya aplikasi terpilih)"
+            isChecked = Rw3NotificationListenerService.isWhitelistModeEnabled(this@MainActivity)
+            setTextColor(Color.parseColor("#E2E8F0"))
+            textSize = 13f
+        }
 
         val divider = View(this).apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -1064,6 +1095,7 @@ class MainActivity : AppCompatActivity() {
         layout.addView(notifSectionHeader)
         layout.addView(cbAppNotifs)
         layout.addView(cbCallNotifs)
+        layout.addView(cbWhitelistMode)
         layout.addView(divider)
         layout.addView(credSectionHeader)
         layout.addView(macLabel)
@@ -1079,6 +1111,8 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("Simpan") { _, _ ->
                 Rw3NotificationListenerService.setNotificationForwardingEnabled(this, cbAppNotifs.isChecked)
                 Rw3NotificationListenerService.setCallForwardingEnabled(this, cbCallNotifs.isChecked)
+                Rw3NotificationListenerService.setWhitelistModeEnabled(this, cbWhitelistMode.isChecked)
+                updateNotificationUiState()
 
                 val result = viewModel.saveCredentialsAndWebhook(
                     mac = macEdit.text.toString(),
@@ -1107,5 +1141,229 @@ class MainActivity : AppCompatActivity() {
     private fun copyTextToClipboard(label: String, text: String) {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
+    }
+
+    // =========================================================================
+    // Notification Whitelist Filter Dialog & Adapter
+    // =========================================================================
+
+    private data class WhitelistAppItem(
+        val appName: String,
+        val packageName: String,
+        val icon: Drawable?,
+        var isSelected: Boolean
+    )
+
+    private class WhitelistAppAdapter(
+        private val allItems: MutableList<WhitelistAppItem>,
+        private val onSelectionChanged: () -> Unit
+    ) : RecyclerView.Adapter<WhitelistAppAdapter.ViewHolder>() {
+
+        private var filteredItems: MutableList<WhitelistAppItem> = allItems.toMutableList()
+
+        class ViewHolder(val binding: ItemWhitelistAppBinding) : RecyclerView.ViewHolder(binding.root)
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
+            val inflater = LayoutInflater.from(parent.context)
+            val binding = ItemWhitelistAppBinding.inflate(inflater, parent, false)
+            return ViewHolder(binding)
+        }
+
+        override fun getItemCount(): Int = filteredItems.size
+
+        override fun onBindViewHolder(holder: ViewHolder, position: Int) {
+            val item = filteredItems[position]
+            holder.binding.tvAppName.text = item.appName
+            holder.binding.tvPackageName.text = item.packageName
+            if (item.icon != null) {
+                holder.binding.ivAppIcon.setImageDrawable(item.icon)
+            } else {
+                holder.binding.ivAppIcon.setImageResource(R.drawable.ic_hub)
+            }
+
+            // Unbind listener before updating isChecked to prevent circular recycling glitches
+            holder.binding.cbWhitelisted.setOnCheckedChangeListener(null)
+            holder.binding.cbWhitelisted.isChecked = item.isSelected
+
+            holder.binding.cbWhitelisted.setOnCheckedChangeListener { _, isChecked ->
+                item.isSelected = isChecked
+                onSelectionChanged()
+            }
+
+            holder.binding.root.setOnClickListener {
+                item.isSelected = !item.isSelected
+                holder.binding.cbWhitelisted.isChecked = item.isSelected
+                onSelectionChanged()
+            }
+        }
+
+        @SuppressLint("NotifyDataSetChanged")
+        fun filter(query: String) {
+            val q = query.trim().lowercase(Locale.ROOT)
+            filteredItems = if (q.isEmpty()) {
+                allItems.toMutableList()
+            } else {
+                allItems.filter {
+                    it.appName.lowercase(Locale.ROOT).contains(q) ||
+                    it.packageName.lowercase(Locale.ROOT).contains(q)
+                }.toMutableList()
+            }
+            notifyDataSetChanged()
+        }
+
+        @SuppressLint("NotifyDataSetChanged")
+        fun selectPresets(presetPackages: Set<String>) {
+            for (item in allItems) {
+                if (presetPackages.contains(item.packageName)) {
+                    item.isSelected = true
+                }
+            }
+            notifyDataSetChanged()
+            onSelectionChanged()
+        }
+
+        @SuppressLint("NotifyDataSetChanged")
+        fun selectAll(select: Boolean) {
+            for (item in allItems) {
+                item.isSelected = select
+            }
+            notifyDataSetChanged()
+            onSelectionChanged()
+        }
+
+        fun getSelectedPackages(): Set<String> {
+            return allItems.filter { it.isSelected }.map { it.packageName }.toSet()
+        }
+    }
+
+    private fun showAppWhitelistDialog() {
+        val dialogBinding = DialogAppWhitelistBinding.inflate(layoutInflater)
+        val initialWhitelist = HashSet(Rw3NotificationListenerService.getWhitelistedPackages(this))
+        val isWhitelistMode = Rw3NotificationListenerService.isWhitelistModeEnabled(this)
+
+        dialogBinding.switchWhitelistMode.isChecked = isWhitelistMode
+        dialogBinding.tvSwitchHint.text = if (isWhitelistMode) {
+            "Hanya aplikasi tercentang yang diteruskan ke jam"
+        } else {
+            "Filter nonaktif: SEMUA aplikasi diteruskan ke jam"
+        }
+
+        dialogBinding.switchWhitelistMode.setOnCheckedChangeListener { _, isChecked ->
+            dialogBinding.tvSwitchHint.text = if (isChecked) {
+                "Hanya aplikasi tercentang yang diteruskan ke jam"
+            } else {
+                "Filter nonaktif: SEMUA aplikasi diteruskan ke jam"
+            }
+        }
+
+        var adapter: WhitelistAppAdapter? = null
+
+        fun updateCountDisplay() {
+            val totalSelected = adapter?.getSelectedPackages()?.size ?: initialWhitelist.size
+            val showingCount = adapter?.itemCount ?: 0
+            dialogBinding.tvSelectedCount.text = "$totalSelected aplikasi diizinkan ($showingCount ditampilkan)"
+        }
+
+        dialogBinding.rvApps.layoutManager = LinearLayoutManager(this)
+
+        var scanJob: Job? = null
+
+        val alertDialog = AlertDialog.Builder(this)
+            .setView(dialogBinding.root)
+            .setPositiveButton("Simpan") { _, _ ->
+                val selected = adapter?.getSelectedPackages() ?: initialWhitelist
+                val whitelistActive = dialogBinding.switchWhitelistMode.isChecked
+                Rw3NotificationListenerService.setWhitelistModeEnabled(this, whitelistActive)
+                Rw3NotificationListenerService.setWhitelistedPackages(this, selected)
+                updateNotificationUiState()
+                Toast.makeText(
+                    this,
+                    if (whitelistActive) {
+                        "Filter Whitelist Aktif: ${selected.size} aplikasi diizinkan."
+                    } else {
+                        "Filter Whitelist dinonaktifkan (semua aplikasi diizinkan)."
+                    },
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            .setNegativeButton("Batal", null)
+            .setOnDismissListener {
+                scanJob?.cancel()
+            }
+            .create()
+
+        alertDialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        alertDialog.show()
+
+        // Asynchronously scan installed applications without blocking UI
+        scanJob = lifecycleScope.launch(Dispatchers.Default) {
+            val pm = packageManager
+            val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
+                addCategory(Intent.CATEGORY_LAUNCHER)
+            }
+            val resolveInfos = pm.queryIntentActivities(mainIntent, 0)
+            val seen = HashSet<String>()
+            val items = mutableListOf<WhitelistAppItem>()
+
+            for (ri in resolveInfos) {
+                val pkg = ri.activityInfo.packageName
+                if (pkg != packageName && seen.add(pkg)) {
+                    val label = ri.loadLabel(pm).toString()
+                    val icon = try { ri.loadIcon(pm) } catch (_: Exception) { null }
+                    items.add(WhitelistAppItem(label, pkg, icon, initialWhitelist.contains(pkg)))
+                }
+            }
+
+            // Also include any currently whitelisted / default packages (e.g. system messaging/dialer)
+            val extraPackages = initialWhitelist + Rw3NotificationListenerService.DEFAULT_WHITELIST
+            for (pkg in extraPackages) {
+                if (pkg != packageName && seen.add(pkg)) {
+                    val (label, icon) = try {
+                        val info = pm.getApplicationInfo(pkg, 0)
+                        Pair(pm.getApplicationLabel(info).toString(), pm.getApplicationIcon(info))
+                    } catch (_: Exception) {
+                        Pair(pkg.substringAfterLast('.'), null)
+                    }
+                    items.add(WhitelistAppItem(label, pkg, icon, initialWhitelist.contains(pkg)))
+                }
+            }
+
+            // Sort: Selected apps first, then alphabetically by name
+            items.sortWith(
+                compareByDescending<WhitelistAppItem> { it.isSelected }
+                    .thenBy { it.appName.lowercase(Locale.ROOT) }
+            )
+
+            withContext(Dispatchers.Main) {
+                adapter = WhitelistAppAdapter(items) {
+                    updateCountDisplay()
+                }
+                dialogBinding.rvApps.adapter = adapter
+                dialogBinding.layoutLoading.visibility = View.GONE
+                dialogBinding.rvApps.visibility = View.VISIBLE
+                updateCountDisplay()
+
+                dialogBinding.etSearchApp.addTextChangedListener(object : TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                        adapter?.filter(s?.toString() ?: "")
+                        updateCountDisplay()
+                    }
+                    override fun afterTextChanged(s: Editable?) {}
+                })
+
+                dialogBinding.btnPresetChat.setOnClickListener {
+                    adapter?.selectPresets(Rw3NotificationListenerService.DEFAULT_WHITELIST)
+                }
+
+                dialogBinding.btnSelectAll.setOnClickListener {
+                    adapter?.selectAll(true)
+                }
+
+                dialogBinding.btnClearAll.setOnClickListener {
+                    adapter?.selectAll(false)
+                }
+            }
+        }
     }
 }

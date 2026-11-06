@@ -44,6 +44,10 @@
     <!-- For minimal wake-lock during sleep-log packet bursts & webhook sync -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Required on Android 11+ (API 30+) to query installed apps for the notification whitelist filter -->
+    <uses-permission
+        android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
 
     <application
         android:allowBackup="false"
