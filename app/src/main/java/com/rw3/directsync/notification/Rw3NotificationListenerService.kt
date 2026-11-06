@@ -128,6 +128,7 @@ class Rw3NotificationListenerService : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         Log.i(TAG, "Rw3NotificationListenerService terhubung ke Android Notification Manager.")
+        BleSyncService.instance?.refreshMediaSessions(forcePush = true)
     }
 
     override fun onListenerDisconnected() {
@@ -147,8 +148,22 @@ class Rw3NotificationListenerService : NotificationListenerService() {
         val notification = sbn.notification ?: return
         val extras = notification.extras
 
-        // 2. Identify if this is an incoming phone call
+        // 2. Identify if this is a Media Player / Transport notification
         val category = notification.category
+        val isMediaNotification = (category == Notification.CATEGORY_TRANSPORT) ||
+            (extras?.containsKey(Notification.EXTRA_MEDIA_SESSION) == true)
+        if (isMediaNotification) {
+            val mediaTitle = (extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString()
+                ?: extras?.getCharSequence(Notification.EXTRA_TITLE_BIG)?.toString()
+                ?: "").trim()
+            val mediaArtist = (extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+                ?: extras?.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()
+                ?: "").trim()
+            BleSyncService.instance?.onMediaNotificationUpdated(mediaTitle, mediaArtist)
+            return
+        }
+
+        // 3. Identify if this is an incoming phone call
         val isCall = (category == Notification.CATEGORY_CALL)
 
         // 3. Filter out ongoing non-alert background notifications (e.g. downloads, background tasks)

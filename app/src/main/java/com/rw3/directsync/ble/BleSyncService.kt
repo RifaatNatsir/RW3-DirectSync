@@ -734,6 +734,7 @@ class BleSyncService : LifecycleService() {
             addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
             addAction(Intent.ACTION_USER_PRESENT)
             addAction(Intent.ACTION_SCREEN_ON)
+            addAction("android.media.VOLUME_CHANGED_ACTION")
         }
         autoReconnectReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
@@ -752,6 +753,9 @@ class BleSyncService : LifecycleService() {
                             appendLog("[Auto-Reconnect Cerdas] Layar HP menyala (User Present), mencoba reconnect oportunistik...")
                             scheduleReconnect("Layar Menyala (Opportunistic)", immediate = true)
                         }
+                    }
+                    "android.media.VOLUME_CHANGED_ACTION" -> {
+                        scheduleDebouncedMediaSync()
                     }
                 }
             }
@@ -831,18 +835,42 @@ class BleSyncService : LifecycleService() {
     private var mediaSessionManager: MediaSessionManager? = null
     private var activeMediaController: MediaController? = null
     private var audioManager: AudioManager? = null
+    private var isMediaSessionListenerRegistered: Boolean = false
+
+    // Deduplication & Throttling state to prevent 100 pkt/sec flooding onPlaybackStateChanged
+    private var mediaSyncDebounceJob: Job? = null
+    private var lastPushedMediaStateCode: Int = -1
+    private var lastPushedTitle: String = ""
+    private var lastPushedArtist: String = ""
+    private var lastPushedVolume: Int = -1
+    private var lastMediaPushTimestamp: Long = 0L
+
+    // Fallback cached track info when player pauses or notification updates
+    private var cachedFallbackTitle: String = ""
+    private var cachedFallbackArtist: String = ""
 
     private val activeSessionsListener = MediaSessionManager.OnActiveSessionsChangedListener { controllers ->
-        updateActiveMediaController(controllers)
+        updateActiveMediaController(controllers, forcePush = false)
     }
 
     private val mediaControllerCallback = object : MediaController.Callback() {
         override fun onMetadataChanged(metadata: MediaMetadata?) {
-            syncCurrentMediaToWatch()
+            scheduleDebouncedMediaSync(force = false)
         }
 
         override fun onPlaybackStateChanged(state: PlaybackState?) {
-            syncCurrentMediaToWatch()
+            scheduleDebouncedMediaSync(force = false)
+        }
+
+        override fun onAudioInfoChanged(info: MediaController.PlaybackInfo) {
+            scheduleDebouncedMediaSync(force = false)
+        }
+
+        override fun onSessionDestroyed() {
+            appendLog("[Kontrol Musik] Sesi media sebelumnya ditutup; mencari sesi pemutar musik aktif lainnya...")
+            activeMediaController?.unregisterCallback(this)
+            activeMediaController = null
+            refreshMediaSessions(forcePush = false)
         }
     }
 
@@ -850,59 +878,170 @@ class BleSyncService : LifecycleService() {
         try {
             audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
             mediaSessionManager = getSystemService(Context.MEDIA_SESSION_SERVICE) as MediaSessionManager
-
-            val notifListenerComponent = ComponentName(this, Rw3NotificationListenerService::class.java)
-            if (Rw3NotificationListenerService.isNotificationAccessGranted(this)) {
-                val sessions = mediaSessionManager?.getActiveSessions(notifListenerComponent)
-                updateActiveMediaController(sessions)
-                mediaSessionManager?.addOnActiveSessionsChangedListener(activeSessionsListener, notifListenerComponent)
-                appendLog("[Kontrol Musik] MediaSession listener terpasang (${sessions?.size ?: 0} sesi aktif).")
-            } else {
-                appendLog("[Kontrol Musik] Izin akses notifikasi belum aktif; kontrol musik menggunakan fallback KeyEvent.")
-            }
+            refreshMediaSessions(forcePush = false)
         } catch (e: Exception) {
             Log.w(TAG, "Gagal menginisialisasi MediaSessionManager: ${e.message}")
         }
     }
 
+    fun refreshMediaSessions(forcePush: Boolean = false) {
+        try {
+            if (mediaSessionManager == null) {
+                mediaSessionManager = getSystemService(Context.MEDIA_SESSION_SERVICE) as? MediaSessionManager
+            }
+            if (audioManager == null) {
+                audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            }
+            val notifListenerComponent = ComponentName(this, Rw3NotificationListenerService::class.java)
+            if (Rw3NotificationListenerService.isNotificationAccessGranted(this)) {
+                if (!isMediaSessionListenerRegistered) {
+                    try {
+                        mediaSessionManager?.removeOnActiveSessionsChangedListener(activeSessionsListener)
+                    } catch (_: Exception) {}
+                    mediaSessionManager?.addOnActiveSessionsChangedListener(activeSessionsListener, notifListenerComponent)
+                    isMediaSessionListenerRegistered = true
+                }
+                val sessions = mediaSessionManager?.getActiveSessions(notifListenerComponent)
+                updateActiveMediaController(sessions, forcePush = forcePush)
+            } else if (forcePush) {
+                syncCurrentMediaToWatch(force = true)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Gagal refresh MediaSessions: ${e.message}")
+            if (forcePush) {
+                syncCurrentMediaToWatch(force = true)
+            }
+        }
+    }
+
+    fun onMediaNotificationUpdated(title: String, artist: String) {
+        if (title.isNotBlank()) cachedFallbackTitle = title
+        if (artist.isNotBlank()) cachedFallbackArtist = artist
+        mainHandler.post {
+            refreshMediaSessions(forcePush = false)
+        }
+    }
+
     private fun cleanupMediaController() {
+        mediaSyncDebounceJob?.cancel()
         try {
             activeMediaController?.unregisterCallback(mediaControllerCallback)
             activeMediaController = null
-            mediaSessionManager?.removeOnActiveSessionsChangedListener(activeSessionsListener)
+            if (isMediaSessionListenerRegistered) {
+                mediaSessionManager?.removeOnActiveSessionsChangedListener(activeSessionsListener)
+                isMediaSessionListenerRegistered = false
+            }
         } catch (_: Exception) {}
     }
 
-    private fun updateActiveMediaController(controllers: List<MediaController>?) {
-        val newController = controllers?.firstOrNull()
-        if (activeMediaController?.sessionToken != newController?.sessionToken) {
-            activeMediaController?.unregisterCallback(mediaControllerCallback)
-            activeMediaController = newController
-            activeMediaController?.registerCallback(mediaControllerCallback)
+    /**
+     * Intelligently picks the best MediaController among multiple active sessions:
+     * 1. Any controller currently in STATE_PLAYING or STATE_BUFFERING.
+     * 2. Keep current `activeMediaController` if it is still in the list and has valid metadata / STATE_PAUSED.
+     * 3. Any controller in STATE_PAUSED with non-empty title metadata.
+     * 4. First available controller.
+     */
+    private fun selectBestMediaController(controllers: List<MediaController>?): MediaController? {
+        if (controllers.isNullOrEmpty()) return null
+
+        // 1. Prefer actively playing session
+        val playing = controllers.firstOrNull {
+            val st = it.playbackState?.state
+            st == PlaybackState.STATE_PLAYING || st == PlaybackState.STATE_BUFFERING || st == PlaybackState.STATE_FAST_FORWARDING
         }
-        syncCurrentMediaToWatch()
+        if (playing != null) return playing
+
+        // 2. Keep existing controller if still present and paused/valid
+        val currentToken = activeMediaController?.sessionToken
+        if (currentToken != null) {
+            val existing = controllers.firstOrNull { it.sessionToken == currentToken }
+            if (existing != null && existing.playbackState?.state != PlaybackState.STATE_NONE) {
+                return existing
+            }
+        }
+
+        // 3. Prefer paused session that has a song title
+        val pausedWithMeta = controllers.firstOrNull {
+            val hasTitle = !it.metadata?.getString(MediaMetadata.METADATA_KEY_TITLE).isNullOrBlank()
+            hasTitle && it.playbackState?.state == PlaybackState.STATE_PAUSED
+        }
+        if (pausedWithMeta != null) return pausedWithMeta
+
+        // 4. Prefer any session with title metadata
+        val anyWithMeta = controllers.firstOrNull {
+            !it.metadata?.getString(MediaMetadata.METADATA_KEY_TITLE).isNullOrBlank()
+        }
+        return anyWithMeta ?: controllers.firstOrNull()
     }
 
-    fun syncCurrentMediaToWatch() {
+    private fun updateActiveMediaController(controllers: List<MediaController>?, forcePush: Boolean = false) {
+        val newController = selectBestMediaController(controllers)
+        if (activeMediaController?.sessionToken != newController?.sessionToken) {
+            try {
+                activeMediaController?.unregisterCallback(mediaControllerCallback)
+            } catch (_: Exception) {}
+            activeMediaController = newController
+            try {
+                activeMediaController?.registerCallback(mediaControllerCallback, mainHandler)
+            } catch (_: Exception) {}
+            if (newController != null) {
+                appendLog("[Kontrol Musik] Terhubung ke pemutar media: ${newController.packageName}")
+            }
+        }
+        scheduleDebouncedMediaSync(force = forcePush)
+    }
+
+    private fun scheduleDebouncedMediaSync(force: Boolean = false) {
+        if (force) {
+            mediaSyncDebounceJob?.cancel()
+            syncCurrentMediaToWatch(force = true)
+            return
+        }
+        mediaSyncDebounceJob?.cancel()
+        mediaSyncDebounceJob = lifecycleScope.launch(Dispatchers.Main) {
+            delay(250L)
+            syncCurrentMediaToWatch(force = false)
+        }
+    }
+
+    fun syncCurrentMediaToWatch(force: Boolean = false) {
+        // Re-check sessions if current controller is missing or lost
+        if (activeMediaController == null && Rw3NotificationListenerService.isNotificationAccessGranted(this)) {
+            try {
+                val notifListenerComponent = ComponentName(this, Rw3NotificationListenerService::class.java)
+                val sessions = mediaSessionManager?.getActiveSessions(notifListenerComponent)
+                val best = selectBestMediaController(sessions)
+                if (best != null) {
+                    activeMediaController = best
+                    best.registerCallback(mediaControllerCallback, mainHandler)
+                }
+            } catch (_: Exception) {}
+        }
+
         val controller = activeMediaController
         val metadata = controller?.metadata
         val playbackState = controller?.playbackState
         val am = audioManager ?: (getSystemService(Context.AUDIO_SERVICE) as AudioManager)
 
-        val title = (metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)
+        val rawTitle = (metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)
             ?: metadata?.description?.title?.toString()
             ?: "").trim()
 
-        val artist = (metadata?.getString(MediaMetadata.METADATA_KEY_ARTIST)
+        val rawArtist = (metadata?.getString(MediaMetadata.METADATA_KEY_ARTIST)
+            ?: metadata?.getString(MediaMetadata.METADATA_KEY_ALBUM_ARTIST)
             ?: metadata?.description?.subtitle?.toString()
             ?: "").trim()
 
-        val isPlaying = playbackState?.state == PlaybackState.STATE_PLAYING
-        val stateCode = when (playbackState?.state) {
-            PlaybackState.STATE_PLAYING -> 1
-            PlaybackState.STATE_PAUSED -> 2
-            else -> 0
-        }
+        if (rawTitle.isNotEmpty()) cachedFallbackTitle = rawTitle
+        if (rawArtist.isNotEmpty()) cachedFallbackArtist = rawArtist
+
+        val effectiveTitle = rawTitle.ifEmpty { cachedFallbackTitle.ifEmpty { "Siap Memutar Musik" } }
+        val effectiveArtist = rawArtist.ifEmpty { cachedFallbackArtist.ifEmpty { controller?.packageName?.substringAfterLast('.')?.replaceFirstChar { it.uppercase() } ?: "RW3 DirectSync" } }
+
+        val pbState = playbackState?.state
+        val isPlaying = (pbState == PlaybackState.STATE_PLAYING || pbState == PlaybackState.STATE_BUFFERING)
+        // Use state=2 (Paused) instead of state=0 so Redmi Watch 3 keeps media buttons unlocked and connected!
+        val stateCode = if (isPlaying) 1 else 2
 
         val maxVol = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
         val curVol = am.getStreamVolume(AudioManager.STREAM_MUSIC)
@@ -910,12 +1049,12 @@ class BleSyncService : LifecycleService() {
 
         val durationMs = metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L
         val positionMs = playbackState?.position ?: 0L
-        val durationSec = (durationMs / 1000).toInt()
-        val posSec = (positionMs / 1000).toInt()
+        val durationSec = (durationMs / 1000).toInt().coerceAtLeast(0)
+        val posSec = (positionMs / 1000).toInt().coerceAtLeast(0)
 
         val mediaInfo = MediaPlaybackInfo(
-            title = title,
-            artist = artist,
+            title = effectiveTitle,
+            artist = effectiveArtist,
             isPlaying = isPlaying,
             volumePercent = volPercent,
             positionSeconds = posSec,
@@ -925,16 +1064,36 @@ class BleSyncService : LifecycleService() {
 
         val engine = protocolEngine
         if (engine != null && engine.isEncryptionInitialized) {
+            val now = System.currentTimeMillis()
+            val hasMeaningfulChange = (stateCode != lastPushedMediaStateCode) ||
+                (effectiveTitle != lastPushedTitle) ||
+                (effectiveArtist != lastPushedArtist) ||
+                (volPercent != lastPushedVolume)
+
+            // Prevent flooding the BLE/SPP queue when onPlaybackStateChanged fires every 10ms for position ticks
+            if (!force && !hasMeaningfulChange) {
+                return
+            }
+            if (!force && (now - lastMediaPushTimestamp) < 300L) {
+                return
+            }
+
+            lastPushedMediaStateCode = stateCode
+            lastPushedTitle = effectiveTitle
+            lastPushedArtist = effectiveArtist
+            lastPushedVolume = volPercent
+            lastMediaPushTimestamp = now
+
             val cmd = engine.buildMusicInfoCommand(
                 state = stateCode,
                 volumePercent = volPercent,
-                track = title,
-                artist = artist,
+                track = effectiveTitle,
+                artist = effectiveArtist,
                 positionSeconds = posSec,
                 durationSeconds = durationSec
             )
             dispatchXiaomiProtoCommand(
-                taskName = "Music Info Push",
+                taskName = "Music Info Push (${if (isPlaying) "PLAYING" else "PAUSED"}: ${effectiveTitle.take(20)})",
                 commandProto = cmd
             )
         }
@@ -942,6 +1101,11 @@ class BleSyncService : LifecycleService() {
 
     fun handleMediaKeyFromWatch(key: Int, volume: Int) {
         val am = audioManager ?: (getSystemService(Context.AUDIO_SERVICE) as AudioManager)
+
+        // Refresh sessions before acting so we never use a dead/stale MediaController
+        if (activeMediaController == null || activeMediaController?.playbackState?.state == PlaybackState.STATE_NONE) {
+            refreshMediaSessions(forcePush = false)
+        }
         val controller = activeMediaController
 
         appendLog("[Kontrol Musik] Perintah dari jam tangan: key=$key, vol=$volume")
@@ -988,7 +1152,7 @@ class BleSyncService : LifecycleService() {
 
         lifecycleScope.launch(Dispatchers.Main) {
             delay(350L)
-            syncCurrentMediaToWatch()
+            syncCurrentMediaToWatch(force = true)
         }
     }
 
@@ -1537,6 +1701,7 @@ class BleSyncService : LifecycleService() {
                 appendLog("Autentikasi BERHASIL! Mode Hemat Baterai (Eco Mode) & Kontrol Musik aktif.")
                 _syncState.value = SyncState.Authenticated
                 reconnectAttempt = 0 // Reset reconnect backoff counter upon successful authentication
+                lastPushedMediaStateCode = -1 // Ensure fresh MusicInfo push upon authentication
                 updateForegroundNotification("Tersambung (Eco Mode) • Musik Aktif • Mengambil baterai & HR...")
 
                 // 1. Ambil status baterai (dan cek ulang setiap 30 menit saja)
@@ -1546,7 +1711,7 @@ class BleSyncService : LifecycleService() {
                 requestLiveHeartRateMeasurement()
 
                 // 3. Sinkronisasikan status media/musik HP ke layar Redmi Watch 3
-                syncCurrentMediaToWatch()
+                refreshMediaSessions(forcePush = true)
             }
 
             is XiaomiWearProtocolEngine.DecodedWatchEvent.RealtimeHeartRate -> {
@@ -1597,6 +1762,11 @@ class BleSyncService : LifecycleService() {
 
             is XiaomiWearProtocolEngine.DecodedWatchEvent.CallIgnoreReceived -> {
                 appendLog("[Telepon] Panggilan diabaikan/disenyapkan melalui smartwatch.")
+            }
+
+            is XiaomiWearProtocolEngine.DecodedWatchEvent.MusicInfoRequested -> {
+                appendLog("[Kontrol Musik] Jam meminta status lagu saat ini; mengirim MusicInfo terbaru...")
+                refreshMediaSessions(forcePush = true)
             }
 
             is XiaomiWearProtocolEngine.DecodedWatchEvent.MediaKeyReceived -> {

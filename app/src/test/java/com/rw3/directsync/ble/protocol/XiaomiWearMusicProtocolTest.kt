@@ -116,5 +116,16 @@ class XiaomiWearMusicProtocolTest {
         assertEquals(5, mediaKey.key)
         assertEquals(100, mediaKey.volume)
     }
+
+    @Test
+    fun decodeIncomingMusicInfoRequest_returnsMusicInfoRequestedEvent() {
+        val rawCommand = engine.buildCommandProto(
+            type = XiaomiWearProtocolEngine.CMD_TYPE_MUSIC,
+            subtype = XiaomiWearProtocolEngine.CMD_SUBTYPE_MUSIC_INFO
+        )
+
+        val event = engine.decodeIncomingCommandProto(rawCommand)
+        assertTrue(event is XiaomiWearProtocolEngine.DecodedWatchEvent.MusicInfoRequested)
+    }
 }
 

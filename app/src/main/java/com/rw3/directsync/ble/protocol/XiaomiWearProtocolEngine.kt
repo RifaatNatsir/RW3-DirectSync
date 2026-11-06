@@ -312,13 +312,15 @@ class XiaomiWearProtocolEngine(authKeyHex: String) {
         positionSeconds: Int = 0,
         durationSeconds: Int = 0
     ): ByteArray {
+        val safeTrack = track.ifBlank { "Siap Memutar Musik" }
+        val safeArtist = artist.ifBlank { "RW3 DirectSync" }
         val infoStream = ByteArrayOutputStream().apply {
             writeUint32Field(1, state)
             writeUint32Field(2, volumePercent.coerceIn(0, 100))
-            if (track.isNotEmpty()) writeStringField(4, track)
-            if (artist.isNotEmpty()) writeStringField(5, artist)
-            if (positionSeconds > 0) writeUint32Field(6, positionSeconds)
-            if (durationSeconds > 0) writeUint32Field(7, durationSeconds)
+            writeStringField(4, safeTrack)
+            writeStringField(5, safeArtist)
+            writeUint32Field(6, positionSeconds.coerceAtLeast(0))
+            writeUint32Field(7, durationSeconds.coerceAtLeast(0))
         }
         val musicStream = ByteArrayOutputStream().apply {
             writeBytesField(1, infoStream.toByteArray())
@@ -398,6 +400,7 @@ class XiaomiWearProtocolEngine(authKeyHex: String) {
         data class NotificationDismissed(val id: Int) : DecodedWatchEvent()
         data object CallRejectReceived : DecodedWatchEvent()
         data object CallIgnoreReceived : DecodedWatchEvent()
+        data object MusicInfoRequested : DecodedWatchEvent()
         data class MediaKeyReceived(val key: Int, val volume: Int) : DecodedWatchEvent()
         data class RawCommand(val type: Int, val subtype: Int) : DecodedWatchEvent()
     }
@@ -524,6 +527,9 @@ class XiaomiWearProtocolEngine(authKeyHex: String) {
 
             CMD_TYPE_MUSIC -> {
                 when (subtype) {
+                    CMD_SUBTYPE_MUSIC_INFO -> {
+                        return DecodedWatchEvent.MusicInfoRequested
+                    }
                     CMD_SUBTYPE_MEDIA_KEY -> {
                         val musicBytes = topFields.firstOrNull { it.fieldNumber == 20 && it.wireType == 2 }?.bytesVal
                         if (musicBytes != null) {
@@ -535,12 +541,15 @@ class XiaomiWearProtocolEngine(authKeyHex: String) {
                                 val vol = kFields.firstOrNull { it.fieldNumber == 2 && it.wireType == 0 }?.intVal?.toInt() ?: 0
                                 return DecodedWatchEvent.MediaKeyReceived(key, vol)
                             }
+                            val directMKey = mFields.firstOrNull { it.fieldNumber == 1 && it.wireType == 0 }?.intVal?.toInt()
+                            val directMVol = mFields.firstOrNull { it.fieldNumber == 2 && it.wireType == 0 }?.intVal?.toInt() ?: 0
+                            if (directMKey != null) {
+                                return DecodedWatchEvent.MediaKeyReceived(directMKey, directMVol)
+                            }
                         }
-                        // Fallback check topFields
-                        val directKey = topFields.firstOrNull { it.fieldNumber == 1 && it.wireType == 0 }?.intVal?.toInt() ?: 0
-                        return DecodedWatchEvent.MediaKeyReceived(directKey, 0)
+                        return DecodedWatchEvent.MediaKeyReceived(0, 0)
                     }
-                    else -> return DecodedWatchEvent.RawCommand(type, subtype)
+                    else -> return DecodedWatchEvent.MusicInfoRequested
                 }
             }
         }
