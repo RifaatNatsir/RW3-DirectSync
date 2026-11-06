@@ -49,6 +49,11 @@ class XiaomiWearProtocolEngine(authKeyHex: String) {
         const val CMD_SUBTYPE_REALTIME_STATS_EVENT = 47
         const val CMD_SUBTYPE_WEAR_SPORT_DATA_V2A = 50
 
+        // Music / Media Control (from xiaomi.proto Command -> music = 20)
+        const val CMD_TYPE_MUSIC = 18
+        const val CMD_SUBTYPE_MUSIC_INFO = 1
+        const val CMD_SUBTYPE_MEDIA_KEY = 2
+
         // SPP V1 Framing Constants
         val SPP_V1_PREAMBLE = byteArrayOf(0xBA.toByte(), 0xDC.toByte(), 0xFE.toByte())
         const val SPP_V1_EPILOGUE: Byte = 0xEF.toByte()
@@ -290,6 +295,42 @@ class XiaomiWearProtocolEngine(authKeyHex: String) {
         return buildCommandProto(CMD_TYPE_NOTIFICATION, CMD_SUBTYPE_NOTIFICATION_DISMISS, 9, notif)
     }
 
+    /**
+     * Builds Protobuf `Command` for Music Info (type=18, subtype=1, field 20: Music -> field 1: MusicInfo)
+     * state: 0 = not playing, 1 = playing, 2 = paused
+     * volumePercent: 0 - 100
+     * track: song title
+     * artist: artist name
+     * positionSeconds: playback progress in seconds
+     * durationSeconds: total duration in seconds
+     */
+    fun buildMusicInfoCommand(
+        state: Int,
+        volumePercent: Int,
+        track: String,
+        artist: String,
+        positionSeconds: Int = 0,
+        durationSeconds: Int = 0
+    ): ByteArray {
+        val infoStream = ByteArrayOutputStream().apply {
+            writeUint32Field(1, state)
+            writeUint32Field(2, volumePercent.coerceIn(0, 100))
+            if (track.isNotEmpty()) writeStringField(4, track)
+            if (artist.isNotEmpty()) writeStringField(5, artist)
+            if (positionSeconds > 0) writeUint32Field(6, positionSeconds)
+            if (durationSeconds > 0) writeUint32Field(7, durationSeconds)
+        }
+        val musicStream = ByteArrayOutputStream().apply {
+            writeBytesField(1, infoStream.toByteArray())
+        }
+        return buildCommandProto(
+            type = CMD_TYPE_MUSIC,
+            subtype = CMD_SUBTYPE_MUSIC_INFO,
+            nestedFieldNumber = 20,
+            nestedBytes = musicStream.toByteArray()
+        )
+    }
+
     // =========================================================================
     // 2. Protobuf Wire Parser (Extracts Auth Nonce, Realtime HR, Activity File IDs)
     // =========================================================================
@@ -357,6 +398,7 @@ class XiaomiWearProtocolEngine(authKeyHex: String) {
         data class NotificationDismissed(val id: Int) : DecodedWatchEvent()
         data object CallRejectReceived : DecodedWatchEvent()
         data object CallIgnoreReceived : DecodedWatchEvent()
+        data class MediaKeyReceived(val key: Int, val volume: Int) : DecodedWatchEvent()
         data class RawCommand(val type: Int, val subtype: Int) : DecodedWatchEvent()
     }
 
@@ -476,6 +518,28 @@ class XiaomiWearProtocolEngine(authKeyHex: String) {
                     }
                     CMD_SUBTYPE_CALL_REJECT -> return DecodedWatchEvent.CallRejectReceived
                     CMD_SUBTYPE_CALL_IGNORE -> return DecodedWatchEvent.CallIgnoreReceived
+                    else -> return DecodedWatchEvent.RawCommand(type, subtype)
+                }
+            }
+
+            CMD_TYPE_MUSIC -> {
+                when (subtype) {
+                    CMD_SUBTYPE_MEDIA_KEY -> {
+                        val musicBytes = topFields.firstOrNull { it.fieldNumber == 20 && it.wireType == 2 }?.bytesVal
+                        if (musicBytes != null) {
+                            val mFields = parseProtoFields(musicBytes)
+                            val keyBytes = mFields.firstOrNull { it.fieldNumber == 2 && it.wireType == 2 }?.bytesVal
+                            if (keyBytes != null) {
+                                val kFields = parseProtoFields(keyBytes)
+                                val key = kFields.firstOrNull { it.fieldNumber == 1 && it.wireType == 0 }?.intVal?.toInt() ?: 0
+                                val vol = kFields.firstOrNull { it.fieldNumber == 2 && it.wireType == 0 }?.intVal?.toInt() ?: 0
+                                return DecodedWatchEvent.MediaKeyReceived(key, vol)
+                            }
+                        }
+                        // Fallback check topFields
+                        val directKey = topFields.firstOrNull { it.fieldNumber == 1 && it.wireType == 0 }?.intVal?.toInt() ?: 0
+                        return DecodedWatchEvent.MediaKeyReceived(directKey, 0)
+                    }
                     else -> return DecodedWatchEvent.RawCommand(type, subtype)
                 }
             }

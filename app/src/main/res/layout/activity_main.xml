@@ -513,6 +513,229 @@
                     </LinearLayout>
                 </LinearLayout>
 
+                <!-- 1C. KONTROL MEDIA & MUSIK DUA ARAH + AUTO-RECONNECT CERDAS -->
+                <LinearLayout
+                    android:id="@+id/cardMediaAndAutoReconnect"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_card"
+                    android:orientation="vertical"
+                    android:padding="14dp"
+                    android:layout_marginBottom="14dp">
+
+                    <!-- Title Row -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+                        <FrameLayout
+                            android:layout_width="32dp"
+                            android:layout_height="32dp"
+                            android:background="@drawable/bg_subcard">
+                            <ImageView
+                                android:layout_width="18dp"
+                                android:layout_height="18dp"
+                                android:layout_gravity="center"
+                                android:src="@drawable/ic_music_note"
+                                app:tint="@color/secondary_cyan" />
+                        </FrameLayout>
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical"
+                            android:layout_marginStart="10dp">
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Kontrol Media / Musik"
+                                android:textSize="15sp"
+                                android:textStyle="bold"
+                                android:textColor="@color/on_surface" />
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Sinkronisasi Dua Arah (Jam ↔ Spotify / YouTube Music)"
+                                android:textSize="11sp"
+                                android:textColor="@color/on_surface_variant" />
+                        </LinearLayout>
+                        <TextView
+                            android:id="@+id/tvMediaStatusBadge"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Siap"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/secondary_cyan"
+                            android:background="@drawable/bg_chip"
+                            android:paddingHorizontal="7dp"
+                            android:paddingVertical="3dp" />
+                    </LinearLayout>
+
+                    <!-- Now Playing Subcard -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:background="@drawable/bg_subcard"
+                        android:padding="12dp"
+                        android:layout_marginTop="10dp">
+
+                        <FrameLayout
+                            android:layout_width="40dp"
+                            android:layout_height="40dp"
+                            android:background="@drawable/bg_chip">
+                            <ImageView
+                                android:id="@+id/ivMediaCover"
+                                android:layout_width="22dp"
+                                android:layout_height="22dp"
+                                android:layout_gravity="center"
+                                android:src="@drawable/ic_music_note"
+                                app:tint="@color/primary_mint" />
+                        </FrameLayout>
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical"
+                            android:layout_marginStart="10dp">
+
+                            <TextView
+                                android:id="@+id/tvMediaTrackTitle"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Tidak ada media yang diputar"
+                                android:textSize="13sp"
+                                android:textStyle="bold"
+                                android:textColor="@color/on_surface"
+                                android:maxLines="1"
+                                android:ellipsize="end" />
+
+                            <TextView
+                                android:id="@+id/tvMediaArtist"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Buka Spotify / YouTube Music di HP"
+                                android:textSize="11sp"
+                                android:textColor="@color/on_surface_variant"
+                                android:maxLines="1"
+                                android:ellipsize="end" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:id="@+id/tvMediaVolumePercent"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Vol 70%"
+                            android:textSize="11sp"
+                            android:textColor="@color/on_surface_muted"
+                            android:fontFamily="monospace"
+                            android:layout_marginStart="6dp" />
+                    </LinearLayout>
+
+                    <!-- Playback Action Buttons -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center"
+                        android:layout_marginTop="8dp">
+
+                        <Button
+                            android:id="@+id/btnMediaPrev"
+                            android:layout_width="0dp"
+                            android:layout_height="36dp"
+                            android:layout_weight="1"
+                            android:text="⏮ Prev"
+                            android:textSize="11sp"
+                            android:textColor="#FFFFFF"
+                            android:textStyle="bold"
+                            android:background="@drawable/bg_chip"
+                            app:backgroundTint="@null"
+                            android:layout_marginEnd="6dp" />
+
+                        <Button
+                            android:id="@+id/btnMediaPlayPause"
+                            android:layout_width="0dp"
+                            android:layout_height="36dp"
+                            android:layout_weight="1.2"
+                            android:text="⏯ Play / Pause"
+                            android:textSize="11sp"
+                            android:textColor="#FFFFFF"
+                            android:textStyle="bold"
+                            android:background="@drawable/bg_button_cyan"
+                            app:backgroundTint="@null"
+                            android:layout_marginEnd="6dp" />
+
+                        <Button
+                            android:id="@+id/btnMediaNext"
+                            android:layout_width="0dp"
+                            android:layout_height="36dp"
+                            android:layout_weight="1"
+                            android:text="⏭ Next"
+                            android:textSize="11sp"
+                            android:textColor="#FFFFFF"
+                            android:textStyle="bold"
+                            android:background="@drawable/bg_chip"
+                            app:backgroundTint="@null" />
+                    </LinearLayout>
+
+                    <!-- Auto-Reconnect Cerdas Info Strip -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:background="@drawable/bg_subcard"
+                        android:padding="10dp"
+                        android:layout_marginTop="10dp">
+
+                        <FrameLayout
+                            android:layout_width="28dp"
+                            android:layout_height="28dp"
+                            android:background="@drawable/bg_chip">
+                            <ImageView
+                                android:layout_width="16dp"
+                                android:layout_height="16dp"
+                                android:layout_gravity="center"
+                                android:src="@drawable/ic_radar"
+                                app:tint="@color/primary_mint" />
+                        </FrameLayout>
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical"
+                            android:layout_marginStart="8dp">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Auto-Reconnect Cerdas Latar Belakang"
+                                android:textSize="11sp"
+                                android:textStyle="bold"
+                                android:textColor="@color/on_surface" />
+
+                            <TextView
+                                android:id="@+id/tvAutoReconnectStatus"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Watchdog Aktif • Exponential Backoff (3s - 120s) • Event-Driven"
+                                android:textSize="10sp"
+                                android:textColor="@color/on_surface_variant" />
+                        </LinearLayout>
+
+                        <ImageView
+                            android:layout_width="8dp"
+                            android:layout_height="8dp"
+                            android:src="@drawable/dot_pulse_green" />
+                    </LinearLayout>
+                </LinearLayout>
+
                 <!-- 2. DETAK JANTUNG LANGSUNG (Hero Card) -->
                 <LinearLayout
                     android:id="@+id/cardHeartRateStream"

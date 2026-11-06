@@ -136,6 +136,11 @@ class MainActivity : AppCompatActivity() {
                             viewModel.onHrStreamingChanged(streaming)
                         }
                     }
+                    launch {
+                        service.currentMediaState.collect { media ->
+                            updateMediaUi(media)
+                        }
+                    }
                 }
             }
         }
@@ -259,6 +264,25 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnFilterApps.setOnClickListener {
             showAppWhitelistDialog()
+        }
+
+        // Card 1C: Two-Way Media & Music Controls
+        binding.btnMediaPlayPause.setOnClickListener {
+            bleService?.let { svc ->
+                if (svc.currentMediaState.value.isPlaying) {
+                    svc.sendMediaPause()
+                } else {
+                    svc.sendMediaPlay()
+                }
+            } ?: Toast.makeText(this, "Hubungkan jam tangan atau putar musik di HP terlebih dahulu.", Toast.LENGTH_SHORT).show()
+        }
+
+        binding.btnMediaNext.setOnClickListener {
+            bleService?.sendMediaNext() ?: Toast.makeText(this, "Hubungkan jam tangan atau putar musik di HP terlebih dahulu.", Toast.LENGTH_SHORT).show()
+        }
+
+        binding.btnMediaPrev.setOnClickListener {
+            bleService?.sendMediaPrevious() ?: Toast.makeText(this, "Hubungkan jam tangan atau putar musik di HP terlebih dahulu.", Toast.LENGTH_SHORT).show()
         }
 
         // Card 7: Sync Semua Data (Sleep, Workouts, Activities, Battery)
@@ -764,6 +788,7 @@ class MainActivity : AppCompatActivity() {
                 binding.imgHeaderGattDot.setImageResource(R.drawable.dot_pulse_green)
                 binding.tvDeviceStatusTag.text = " Tersambung"
                 binding.tvDeviceStatusTag.setTextColor(mintColor)
+                binding.tvAutoReconnectStatus.text = "Tersambung (Eco Mode aktif • Siap auto-reconnect)"
             }
 
             is BleSyncService.SyncState.StreamingHeartRate -> {
@@ -803,6 +828,7 @@ class MainActivity : AppCompatActivity() {
                 binding.imgHeaderGattDot.setImageResource(R.drawable.dot_pulse_coral)
                 binding.tvDeviceStatusTag.text = "✕ Terputus"
                 binding.tvDeviceStatusTag.setTextColor(coralColor)
+                binding.tvAutoReconnectStatus.text = if (state.willReconnect) "Auto-Reconnect: ${state.reason}" else "Terputus: ${state.reason}"
             }
 
             is BleSyncService.SyncState.Error -> {
@@ -811,7 +837,26 @@ class MainActivity : AppCompatActivity() {
                 binding.imgHeaderGattDot.setImageResource(R.drawable.dot_pulse_coral)
                 binding.tvDeviceStatusTag.text = "⚠ Error"
                 binding.tvDeviceStatusTag.setTextColor(coralColor)
+                binding.tvAutoReconnectStatus.text = "Error: ${state.message}"
             }
+        }
+    }
+
+    @SuppressLint("SetTextI18n")
+    private fun updateMediaUi(media: BleSyncService.MediaPlaybackInfo) {
+        val hasTrack = media.title.isNotEmpty()
+        binding.tvMediaTrackTitle.text = if (hasTrack) media.title else "Tidak ada media yang diputar"
+        binding.tvMediaArtist.text = if (hasTrack && media.artist.isNotEmpty()) media.artist else "Buka Spotify / YouTube Music di HP"
+        binding.tvMediaVolumePercent.text = "Vol ${media.volumePercent}%"
+
+        if (media.isPlaying) {
+            binding.tvMediaStatusBadge.text = "Memutar"
+            binding.tvMediaStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.primary_mint))
+            binding.btnMediaPlayPause.text = "⏸ Pause"
+        } else {
+            binding.tvMediaStatusBadge.text = if (hasTrack) "Jeda" else "Siap"
+            binding.tvMediaStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.secondary_cyan))
+            binding.btnMediaPlayPause.text = "▶ Play"
         }
     }
 

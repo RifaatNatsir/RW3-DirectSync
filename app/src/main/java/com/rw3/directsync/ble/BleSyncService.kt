@@ -19,15 +19,24 @@ import android.bluetooth.le.BluetoothLeScanner
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
+import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
+import android.media.AudioManager
+import android.media.MediaMetadata
+import android.media.session.MediaController
+import android.media.session.MediaSessionManager
+import android.media.session.PlaybackState
 import android.os.Binder
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
+import android.view.KeyEvent
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
@@ -38,6 +47,7 @@ import com.rw3.directsync.ble.protocol.XiaomiWearProtocolEngine
 import com.rw3.directsync.data.db.Rw3Database
 import com.rw3.directsync.data.db.entity.HeartRateEntity
 import com.rw3.directsync.network.WebhookDispatcher
+import com.rw3.directsync.notification.Rw3NotificationListenerService
 import com.rw3.directsync.ui.MainActivity
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -49,6 +59,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.io.OutputStream
@@ -59,6 +70,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import kotlin.random.Random
 
 /**
  * Dual-Transport (Bluetooth Classic RFCOMM/SPP + BLE GATT) Foreground Service for Redmi Watch 3 (`lchz.watch.m65sa`).
@@ -93,6 +105,10 @@ class BleSyncService : LifecycleService() {
         const val ACTION_SYNC_SLEEP = "com.rw3.directsync.action.SYNC_SLEEP"
         const val ACTION_EXPORT_WEBHOOK = "com.rw3.directsync.action.EXPORT_WEBHOOK"
         const val ACTION_SEND_TEST_NOTIFICATION = "com.rw3.directsync.action.SEND_TEST_NOTIFICATION"
+        const val ACTION_MEDIA_PLAY = "com.rw3.directsync.action.MEDIA_PLAY"
+        const val ACTION_MEDIA_PAUSE = "com.rw3.directsync.action.MEDIA_PAUSE"
+        const val ACTION_MEDIA_NEXT = "com.rw3.directsync.action.MEDIA_NEXT"
+        const val ACTION_MEDIA_PREV = "com.rw3.directsync.action.MEDIA_PREV"
 
         const val EXTRA_MAC_ADDRESS = "extra_mac_address"
         const val EXTRA_AUTH_KEY = "extra_auth_key"
@@ -104,6 +120,9 @@ class BleSyncService : LifecycleService() {
         private const val HR_POLL_INTERVAL_MS = 15_000L
         private const val HR_SENSOR_CUTOFF_TIMEOUT_MS = 8_000L
         private const val BATTERY_POLL_INTERVAL_MS = 30 * 60 * 1000L // 30 minutes to save watch battery
+        private const val MIN_RECONNECT_DELAY_MS = 3_000L
+        private const val MAX_RECONNECT_DELAY_MS = 120_000L // 2 minutes max exponential backoff
+        private const val WATCHDOG_INTERVAL_MS = 300_000L // 5 minutes periodic watchdog
 
         val UUID_SPP = UUID.fromString("00001101-0000-1000-8000-00805f9b34fb")
         val UUID_SERVICE_FDAB = UUID.fromString("0000fdab-0000-1000-8000-00805f9b34fb")
@@ -225,6 +244,18 @@ class BleSyncService : LifecycleService() {
     private val _batteryLevel = MutableStateFlow<Int?>(null)
     val batteryLevel: StateFlow<Int?> = _batteryLevel.asStateFlow()
 
+    data class MediaPlaybackInfo(
+        val title: String = "",
+        val artist: String = "",
+        val isPlaying: Boolean = false,
+        val volumePercent: Int = 0,
+        val positionSeconds: Int = 0,
+        val durationSeconds: Int = 0
+    )
+
+    private val _currentMediaState = MutableStateFlow(MediaPlaybackInfo())
+    val currentMediaState: StateFlow<MediaPlaybackInfo> = _currentMediaState.asStateFlow()
+
     private val _discoveredDevices = MutableStateFlow<List<DiscoveredBleDevice>>(emptyList())
     val discoveredDevices: StateFlow<List<DiscoveredBleDevice>> = _discoveredDevices.asStateFlow()
 
@@ -251,7 +282,10 @@ class BleSyncService : LifecycleService() {
         bluetoothAdapter = bluetoothManager?.adapter
         createNotificationChannel()
         startGattOperationProcessor()
-        appendLog("BleSyncService siap (Eco Power Mode aktif).")
+        setupMediaController()
+        registerAutoReconnectReceivers()
+        startBackgroundWatchdog()
+        appendLog("BleSyncService siap (Eco Power Mode & Auto-Reconnect Cerdas aktif).")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -309,6 +343,9 @@ class BleSyncService : LifecycleService() {
                 stopScan()
                 cancelConnectWatchdog()
                 reconnectJob?.cancel()
+                watchdogJob?.cancel()
+                unregisterAutoReconnectReceivers()
+                cleanupMediaController()
                 closeSppSocket()
                 disconnectAndCloseGatt()
                 _syncState.value = SyncState.Idle
@@ -342,6 +379,11 @@ class BleSyncService : LifecycleService() {
                     body = "Notifikasi dari HP berhasil masuk dengan cepat & responsif ke Redmi Watch 3."
                 )
             }
+
+            ACTION_MEDIA_PLAY -> sendMediaPlay()
+            ACTION_MEDIA_PAUSE -> sendMediaPause()
+            ACTION_MEDIA_NEXT -> sendMediaNext()
+            ACTION_MEDIA_PREV -> sendMediaPrevious()
         }
         return START_REDELIVER_INTENT
     }
@@ -359,6 +401,9 @@ class BleSyncService : LifecycleService() {
         stopScan()
         cancelConnectWatchdog()
         reconnectJob?.cancel()
+        watchdogJob?.cancel()
+        unregisterAutoReconnectReceivers()
+        cleanupMediaController()
         gattOperationQueue.close()
         closeSppSocket()
         disconnectAndCloseGatt()
@@ -680,7 +725,76 @@ class BleSyncService : LifecycleService() {
         connectWatchdogRunnable = null
     }
 
-    private fun scheduleReconnect(reason: String) {
+    private var autoReconnectReceiver: BroadcastReceiver? = null
+    private var watchdogJob: Job? = null
+
+    private fun registerAutoReconnectReceivers() {
+        if (autoReconnectReceiver != null) return
+        val filter = IntentFilter().apply {
+            addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
+            addAction(Intent.ACTION_USER_PRESENT)
+            addAction(Intent.ACTION_SCREEN_ON)
+        }
+        autoReconnectReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    BluetoothAdapter.ACTION_STATE_CHANGED -> {
+                        val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
+                        if (state == BluetoothAdapter.STATE_ON) {
+                            appendLog("[Auto-Reconnect Cerdas] Bluetooth HP diaktifkan, memicu koneksi cepat...")
+                            if (!userRequestedStop && targetMacAddress != null && _syncState.value !is SyncState.Authenticated) {
+                                scheduleReconnect("Bluetooth HP On", immediate = true)
+                            }
+                        }
+                    }
+                    Intent.ACTION_USER_PRESENT, Intent.ACTION_SCREEN_ON -> {
+                        if (!userRequestedStop && targetMacAddress != null && _syncState.value is SyncState.Disconnected && reconnectAttempt > 2) {
+                            appendLog("[Auto-Reconnect Cerdas] Layar HP menyala (User Present), mencoba reconnect oportunistik...")
+                            scheduleReconnect("Layar Menyala (Opportunistic)", immediate = true)
+                        }
+                    }
+                }
+            }
+        }
+        try {
+            registerReceiver(autoReconnectReceiver, filter)
+        } catch (e: Exception) {
+            Log.w(TAG, "Gagal mendaftarkan autoReconnectReceiver: ${e.message}")
+        }
+    }
+
+    private fun unregisterAutoReconnectReceivers() {
+        try {
+            if (autoReconnectReceiver != null) {
+                unregisterReceiver(autoReconnectReceiver)
+                autoReconnectReceiver = null
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun startBackgroundWatchdog() {
+        watchdogJob?.cancel()
+        watchdogJob = lifecycleScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(WATCHDOG_INTERVAL_MS)
+                if (!userRequestedStop && targetMacAddress != null && _syncState.value is SyncState.Disconnected) {
+                    withContext(Dispatchers.Main) {
+                        appendLog("[Watchdog] Pengecekan latar belakang: jam belum tersambung, memicu reconnect...")
+                        scheduleReconnect("Periodic Watchdog", immediate = false)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun calculateReconnectDelayMs(attempt: Int): Long {
+        if (attempt <= 1) return MIN_RECONNECT_DELAY_MS
+        val baseDelay = (MIN_RECONNECT_DELAY_MS * Math.pow(1.8, (attempt - 1).coerceAtMost(6).toDouble())).toLong()
+        val jitter = Random.nextLong(500L, 2000L)
+        return (baseDelay + jitter).coerceIn(MIN_RECONNECT_DELAY_MS, MAX_RECONNECT_DELAY_MS)
+    }
+
+    private fun scheduleReconnect(reason: String, immediate: Boolean = false) {
         if (userRequestedStop) return
         if (sppSocket?.isConnected == true) {
             appendLog("GATT terputus ($reason), namun koneksi SPP masih aktif.")
@@ -690,14 +804,206 @@ class BleSyncService : LifecycleService() {
 
         reconnectJob?.cancel()
         reconnectJob = lifecycleScope.launch(Dispatchers.Main) {
-            reconnectAttempt++
+            if (immediate) {
+                reconnectAttempt = 1
+            } else {
+                reconnectAttempt++
+            }
+            val delayMs = if (immediate) 500L else calculateReconnectDelayMs(reconnectAttempt)
+            val delaySec = delayMs / 1000
             val nextStrategy = if (reconnectAttempt % 4 == 0) 1 else reconnectAttempt % 4
-            delay(2_500L)
-            _syncState.value = SyncState.Disconnected("$reason -> Reconnecting...", willReconnect = true)
-            appendLog("Reconnect #$reconnectAttempt via strategi #$nextStrategy...")
-            initiateSmartConnect(mac, strategyIndex = nextStrategy)
+
+            _syncState.value = SyncState.Disconnected("$reason -> Reconnecting in ${delaySec}s (#$reconnectAttempt)", willReconnect = true)
+            updateForegroundNotification("Terputus ($reason) • Reconnecting dalam ${delaySec}s (#$reconnectAttempt)...")
+            appendLog("[Auto-Reconnect Cerdas] Reconnect #$reconnectAttempt via strategi #$nextStrategy dalam ${delaySec}s...")
+
+            delay(delayMs)
+            if (!userRequestedStop && _syncState.value !is SyncState.Authenticated) {
+                initiateSmartConnect(mac, strategyIndex = nextStrategy)
+            }
         }
     }
+
+    // =========================================================================
+    // Two-Way Media / Music Control (MediaSessionManager + Xiaomi Wear Protobuf)
+    // =========================================================================
+
+    private var mediaSessionManager: MediaSessionManager? = null
+    private var activeMediaController: MediaController? = null
+    private var audioManager: AudioManager? = null
+
+    private val activeSessionsListener = MediaSessionManager.OnActiveSessionsChangedListener { controllers ->
+        updateActiveMediaController(controllers)
+    }
+
+    private val mediaControllerCallback = object : MediaController.Callback() {
+        override fun onMetadataChanged(metadata: MediaMetadata?) {
+            syncCurrentMediaToWatch()
+        }
+
+        override fun onPlaybackStateChanged(state: PlaybackState?) {
+            syncCurrentMediaToWatch()
+        }
+    }
+
+    private fun setupMediaController() {
+        try {
+            audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            mediaSessionManager = getSystemService(Context.MEDIA_SESSION_SERVICE) as MediaSessionManager
+
+            val notifListenerComponent = ComponentName(this, Rw3NotificationListenerService::class.java)
+            if (Rw3NotificationListenerService.isNotificationAccessGranted(this)) {
+                val sessions = mediaSessionManager?.getActiveSessions(notifListenerComponent)
+                updateActiveMediaController(sessions)
+                mediaSessionManager?.addOnActiveSessionsChangedListener(activeSessionsListener, notifListenerComponent)
+                appendLog("[Kontrol Musik] MediaSession listener terpasang (${sessions?.size ?: 0} sesi aktif).")
+            } else {
+                appendLog("[Kontrol Musik] Izin akses notifikasi belum aktif; kontrol musik menggunakan fallback KeyEvent.")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Gagal menginisialisasi MediaSessionManager: ${e.message}")
+        }
+    }
+
+    private fun cleanupMediaController() {
+        try {
+            activeMediaController?.unregisterCallback(mediaControllerCallback)
+            activeMediaController = null
+            mediaSessionManager?.removeOnActiveSessionsChangedListener(activeSessionsListener)
+        } catch (_: Exception) {}
+    }
+
+    private fun updateActiveMediaController(controllers: List<MediaController>?) {
+        val newController = controllers?.firstOrNull()
+        if (activeMediaController?.sessionToken != newController?.sessionToken) {
+            activeMediaController?.unregisterCallback(mediaControllerCallback)
+            activeMediaController = newController
+            activeMediaController?.registerCallback(mediaControllerCallback)
+        }
+        syncCurrentMediaToWatch()
+    }
+
+    fun syncCurrentMediaToWatch() {
+        val controller = activeMediaController
+        val metadata = controller?.metadata
+        val playbackState = controller?.playbackState
+        val am = audioManager ?: (getSystemService(Context.AUDIO_SERVICE) as AudioManager)
+
+        val title = (metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)
+            ?: metadata?.description?.title?.toString()
+            ?: "").trim()
+
+        val artist = (metadata?.getString(MediaMetadata.METADATA_KEY_ARTIST)
+            ?: metadata?.description?.subtitle?.toString()
+            ?: "").trim()
+
+        val isPlaying = playbackState?.state == PlaybackState.STATE_PLAYING
+        val stateCode = when (playbackState?.state) {
+            PlaybackState.STATE_PLAYING -> 1
+            PlaybackState.STATE_PAUSED -> 2
+            else -> 0
+        }
+
+        val maxVol = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        val curVol = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+        val volPercent = if (maxVol > 0) ((curVol * 100) / maxVol).coerceIn(0, 100) else 50
+
+        val durationMs = metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L
+        val positionMs = playbackState?.position ?: 0L
+        val durationSec = (durationMs / 1000).toInt()
+        val posSec = (positionMs / 1000).toInt()
+
+        val mediaInfo = MediaPlaybackInfo(
+            title = title,
+            artist = artist,
+            isPlaying = isPlaying,
+            volumePercent = volPercent,
+            positionSeconds = posSec,
+            durationSeconds = durationSec
+        )
+        _currentMediaState.value = mediaInfo
+
+        val engine = protocolEngine
+        if (engine != null && engine.isEncryptionInitialized) {
+            val cmd = engine.buildMusicInfoCommand(
+                state = stateCode,
+                volumePercent = volPercent,
+                track = title,
+                artist = artist,
+                positionSeconds = posSec,
+                durationSeconds = durationSec
+            )
+            dispatchXiaomiProtoCommand(
+                taskName = "Music Info Push",
+                commandProto = cmd
+            )
+        }
+    }
+
+    fun handleMediaKeyFromWatch(key: Int, volume: Int) {
+        val am = audioManager ?: (getSystemService(Context.AUDIO_SERVICE) as AudioManager)
+        val controller = activeMediaController
+
+        appendLog("[Kontrol Musik] Perintah dari jam tangan: key=$key, vol=$volume")
+
+        when (key) {
+            0 -> { // Play
+                appendLog("[Kontrol Musik] Watch -> PLAY")
+                if (controller != null) {
+                    controller.transportControls.play()
+                } else {
+                    dispatchMediaKeyEvent(KeyEvent.KEYCODE_MEDIA_PLAY)
+                }
+            }
+            1 -> { // Pause
+                appendLog("[Kontrol Musik] Watch -> PAUSE")
+                if (controller != null) {
+                    controller.transportControls.pause()
+                } else {
+                    dispatchMediaKeyEvent(KeyEvent.KEYCODE_MEDIA_PAUSE)
+                }
+            }
+            3 -> { // Previous
+                appendLog("[Kontrol Musik] Watch -> PREVIOUS TRACK")
+                if (controller != null) {
+                    controller.transportControls.skipToPrevious()
+                } else {
+                    dispatchMediaKeyEvent(KeyEvent.KEYCODE_MEDIA_PREVIOUS)
+                }
+            }
+            4 -> { // Next
+                appendLog("[Kontrol Musik] Watch -> NEXT TRACK")
+                if (controller != null) {
+                    controller.transportControls.skipToNext()
+                } else {
+                    dispatchMediaKeyEvent(KeyEvent.KEYCODE_MEDIA_NEXT)
+                }
+            }
+            5 -> { // Volume
+                val direction = if (volume >= 50) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
+                appendLog("[Kontrol Musik] Watch -> VOLUME (${if (volume >= 50) "+1" else "-1"})")
+                am.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, AudioManager.FLAG_SHOW_UI)
+            }
+        }
+
+        lifecycleScope.launch(Dispatchers.Main) {
+            delay(350L)
+            syncCurrentMediaToWatch()
+        }
+    }
+
+    private fun dispatchMediaKeyEvent(keyCode: Int) {
+        val am = audioManager ?: (getSystemService(Context.AUDIO_SERVICE) as AudioManager)
+        val down = KeyEvent(KeyEvent.ACTION_DOWN, keyCode)
+        val up = KeyEvent(KeyEvent.ACTION_UP, keyCode)
+        am.dispatchMediaKeyEvent(down)
+        am.dispatchMediaKeyEvent(up)
+    }
+
+    fun sendMediaPlay() = handleMediaKeyFromWatch(0, 0)
+    fun sendMediaPause() = handleMediaKeyFromWatch(1, 0)
+    fun sendMediaNext() = handleMediaKeyFromWatch(4, 0)
+    fun sendMediaPrevious() = handleMediaKeyFromWatch(3, 0)
 
     private fun closeDeadGattOnly() {
         try {
@@ -1228,15 +1534,19 @@ class BleSyncService : LifecycleService() {
             }
 
             is XiaomiWearProtocolEngine.DecodedWatchEvent.AuthSucceeded -> {
-                appendLog("Autentikasi BERHASIL! Mode Hemat Baterai (Eco Mode) aktif.")
+                appendLog("Autentikasi BERHASIL! Mode Hemat Baterai (Eco Mode) & Kontrol Musik aktif.")
                 _syncState.value = SyncState.Authenticated
-                updateForegroundNotification("Tersambung (Eco Mode) • Mengambil baterai & HR awal...")
+                reconnectAttempt = 0 // Reset reconnect backoff counter upon successful authentication
+                updateForegroundNotification("Tersambung (Eco Mode) • Musik Aktif • Mengambil baterai & HR...")
 
                 // 1. Ambil status baterai (dan cek ulang setiap 30 menit saja)
                 startPeriodicBatteryMonitor()
 
                 // 2. Ambil 1x sampel HR awal lalu otomatis matikan sensor jam (Smart Cut-Off)
                 requestLiveHeartRateMeasurement()
+
+                // 3. Sinkronisasikan status media/musik HP ke layar Redmi Watch 3
+                syncCurrentMediaToWatch()
             }
 
             is XiaomiWearProtocolEngine.DecodedWatchEvent.RealtimeHeartRate -> {
@@ -1287,6 +1597,10 @@ class BleSyncService : LifecycleService() {
 
             is XiaomiWearProtocolEngine.DecodedWatchEvent.CallIgnoreReceived -> {
                 appendLog("[Telepon] Panggilan diabaikan/disenyapkan melalui smartwatch.")
+            }
+
+            is XiaomiWearProtocolEngine.DecodedWatchEvent.MediaKeyReceived -> {
+                handleMediaKeyFromWatch(event.key, event.volume)
             }
 
             is XiaomiWearProtocolEngine.DecodedWatchEvent.RawCommand -> {
