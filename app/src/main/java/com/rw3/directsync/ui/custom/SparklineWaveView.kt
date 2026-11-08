@@ -1,337 +1,186 @@
 package com.rw3.directsync.ui.custom
 
 import android.content.Context
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.DashPathEffect
-import android.graphics.LinearGradient
-import android.graphics.Paint
-import android.graphics.Path
-import android.graphics.Shader
-import android.graphics.Typeface
+import android.graphics.*
 import android.util.AttributeSet
+import android.util.TypedValue
+import android.view.MotionEvent
 import android.view.View
+import androidx.core.content.ContextCompat
+import com.rw3.directsync.R
 import com.rw3.directsync.data.db.entity.HeartRateEntity
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.math.roundToInt
 
-/**
- * Hardware-accelerated 24-Hour Heart Rate Timeline Chart:
- * - Plots real PPG & BLE Heart Rate points over the past 24 hours.
- * - Displays horizontal BPM guidelines (60, 100, 140 BPM) with labels.
- * - Displays vertical 6-hour time markers (-24j, -18j, -12j, -6j, Kini).
- * - Smooth cubic Bézier spline with modern gradient area fill under the curve.
- * - Zero external chart libraries to keep APK size < 3.5 MB and render at 60/120 FPS.
- */
+/** Time-scaled HR chart. Missing intervals stay empty; touch a sample to inspect it. */
 class SparklineWaveView @JvmOverloads constructor(
-    context: Context,
-    attrs: AttributeSet? = null,
-    defStyleAttr: Int = 0
+    context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
-
-    data class HeartRatePoint(
-        val timestamp: Long,
-        val bpm: Int
-    )
-
-    private val density = resources.displayMetrics.density
-
-    private val strokeColor = Color.parseColor("#FF7A73")
-    private val gradientStartColor = Color.argb(100, 255, 122, 115) // ~39% alpha coral
-    private val gradientEndColor = Color.argb(0, 255, 122, 115)     // 0% transparent
-
-    private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = 2.2f * density
-        color = strokeColor
-        strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND
+    private val d = resources.displayMetrics.density
+    private val accent = ContextCompat.getColor(context, R.color.hr_chart_line)
+    private val areaColor = ContextCompat.getColor(context, R.color.hr_chart_fill)
+    private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = accent; strokeWidth = 2.3f * d; style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
     }
-
-    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
+    private val grid = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = ContextCompat.getColor(context, R.color.outline_subtle); strokeWidth = d; alpha = 160
     }
-
-    private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = 1f * density
-        color = Color.parseColor("#1E273D")
-        pathEffect = DashPathEffect(floatArrayOf(4f * density, 4f * density), 0f)
+    private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = ContextCompat.getColor(context, R.color.on_surface_variant)
+        textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 11f, resources.displayMetrics)
     }
-
-    private val axisTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#64748B")
-        textSize = 9.5f * density
-        typeface = Typeface.MONOSPACE
+    private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accent }
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val averageLine = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#FFE1DA"); strokeWidth = 1.3f * d; style = Paint.Style.STROKE
+        pathEffect = DashPathEffect(floatArrayOf(6 * d, 4 * d), 0f)
     }
-
-    private val emptyTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#64748B")
-        textSize = 11f * density
-        textAlign = Paint.Align.CENTER
+    private val plotBackground = Paint().apply { color = ContextCompat.getColor(context, R.color.surface_container_low) }
+    private val markerFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#FFF0EC") }
+    private val bubble = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = ContextCompat.getColor(context, R.color.surface_container_highest)
     }
-
-    private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-        color = strokeColor
+    private val time = SimpleDateFormat("HH:mm", Locale.getDefault())
+    private val date = SimpleDateFormat("dd MMM", Locale.getDefault())
+    private var records = emptyList<HeartRateEntity>()
+    private var selected: HeartRateEntity? = null
+    private var windowHours = 24
+    private val refresh = object : Runnable {
+        override fun run() { invalidate(); postDelayed(this, 60_000) }
     }
-
-    private val dotOuterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-        color = Color.argb(60, 255, 122, 115)
-    }
-
-    private val linePath = Path()
-    private val fillPath = Path()
-    private val gridPath = Path()
-
-    private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
-
-    private var heartRatePoints: MutableList<HeartRatePoint> = mutableListOf()
-    private var cachedGradientHeight: Float = 0f
-
-    /**
-     * Replaces the data with a 24-hour collection of HeartRateEntity from Room SQLite.
-     */
-    fun setHeartRateRecords(records: List<HeartRateEntity>) {
-        val mapped = records
-            .filter { it.bpm in 30..240 }
-            .map { HeartRatePoint(it.timestamp, it.bpm) }
-            .sortedBy { it.timestamp }
-        heartRatePoints = mapped.toMutableList()
+    init { isClickable = true; importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES }
+    fun setWindowHours(hours: Int) { windowHours = hours; selected = null; invalidate() }
+    fun setHeartRateRecords(values: List<HeartRateEntity>) {
+        records = values.filter { it.bpm in 30..240 }.distinctBy { it.timestamp }.sortedBy { it.timestamp }
+        selected = null
+        contentDescription = if (records.isEmpty()) "Grafik detak jantung. Belum ada data."
+        else "Grafik detak jantung $windowHours jam. ${records.size} sampel, minimum ${records.minOf { it.bpm }}, rata-rata ${records.map { it.bpm }.average().toInt()}, maksimum ${records.maxOf { it.bpm }} BPM."
         invalidate()
     }
-
-    /**
-     * Sets points directly.
-     */
-    fun setHeartRateData(points: List<HeartRatePoint>) {
-        heartRatePoints = points.filter { it.bpm in 30..240 }.sortedBy { it.timestamp }.toMutableList()
-        invalidate()
-    }
-
-    /**
-     * Appends or updates the latest real-time BPM reading at current timestamp.
-     */
-    fun updateBpm(bpm: Int) {
-        if (bpm !in 30..240) return
-        val now = System.currentTimeMillis()
-        // If last point was less than 5 seconds ago, update it; otherwise append
-        val last = heartRatePoints.lastOrNull()
-        if (last != null && now - last.timestamp < 5_000L) {
-            heartRatePoints[heartRatePoints.size - 1] = HeartRatePoint(now, bpm)
-        } else {
-            heartRatePoints.add(HeartRatePoint(now, bpm))
-            // Prune records older than 24h
-            val cutoff = now - 24 * 3600 * 1000L
-            heartRatePoints.removeAll { it.timestamp < cutoff }
-        }
-        invalidate()
-    }
-
-    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        super.onSizeChanged(w, h, oldw, oldh)
-        if (h > 0) {
-            cachedGradientHeight = h.toFloat()
-            fillPaint.shader = LinearGradient(
-                0f, 0f, 0f, cachedGradientHeight,
-                gradientStartColor, gradientEndColor,
-                Shader.TileMode.CLAMP
-            )
-        }
-    }
-
+    override fun onAttachedToWindow() { super.onAttachedToWindow(); post(refresh) }
+    override fun onDetachedFromWindow() { removeCallbacks(refresh); super.onDetachedFromWindow() }
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        val w = width.toFloat()
-        val h = height.toFloat()
-        if (w <= 0 || h <= 0) return
-
-        val paddingLeft = 28f * density
-        val paddingRight = 10f * density
-        val paddingTop = 12f * density
-        val paddingBottom = 18f * density
-
-        val plotW = w - paddingLeft - paddingRight
-        val plotH = h - paddingTop - paddingBottom
-        if (plotW <= 0 || plotH <= 0) return
-
+        val left = 36 * d
+        val right = width - 12 * d
+        val top = 34 * d
+        val bottom = height - 30 * d
+        if (right <= left || bottom <= top) return
         val now = System.currentTimeMillis()
-        val window24h = 24 * 3600 * 1000L
-        val startTime = now - window24h
-
-        // 1. Determine Y-axis BPM Range (Dynamic with minimum healthy bounds)
-        var minY = 45
-        var maxY = 145
-        if (heartRatePoints.isNotEmpty()) {
-            val minBpm = heartRatePoints.minOf { it.bpm }
-            val maxBpm = heartRatePoints.maxOf { it.bpm }
-            minY = minOf(minY, (minBpm - 8).coerceAtLeast(35))
-            maxY = maxOf(maxY, (maxBpm + 8).coerceAtMost(220))
-            if (maxY - minY < 40) maxY = minY + 40
+        val duration = windowHours * 3_600_000L
+        val start = now - duration
+        val rawPoints = records.filter { it.timestamp in start..now }
+        val bucketMillis = (if (windowHours == 24) 5 else 30) * 60_000L
+        fun average(values: List<HeartRateEntity>) = values.groupBy { it.timestamp / bucketMillis }.values.map { bucket ->
+            HeartRateEntity(timestamp = bucket.map { it.timestamp }.average().toLong(),
+                bpm = bucket.map { it.bpm }.average().roundToInt())
         }
+        val min = floor(((rawPoints.minOfOrNull { it.bpm } ?: 60) - 10) / 20.0).toInt() * 20
+        val upperBound = ceil(((rawPoints.maxOfOrNull { it.bpm } ?: 110) + 10) / 20.0).toInt() * 20
+        val tick = (ceil((upperBound - min) / 50.0).toInt() * 10).coerceAtLeast(10)
+        val max = min + tick * 5
+        fun x(t: Long) = left + ((t - start).toDouble() / duration * (right - left)).toFloat()
+        fun y(bpm: Int) = bottom - (bpm - min).toFloat() / (max - min) * (bottom - top)
+        canvas.drawRect(left, top, right, bottom, plotBackground)
 
-        fun bpmToY(bpm: Int): Float {
-            val ratio = (bpm - minY).toFloat() / (maxY - minY).toFloat()
-            return paddingTop + (1f - ratio.coerceIn(0f, 1f)) * plotH
+        // Retain missing intervals. Area fill follows only recorded portions of the timeline.
+        val rawSegments = mutableListOf<MutableList<HeartRateEntity>>()
+        rawPoints.forEach { point ->
+            if (rawSegments.isEmpty() || point.timestamp - rawSegments.last().last().timestamp > 20 * 60_000L) {
+                rawSegments.add(mutableListOf())
+            }
+            rawSegments.last().add(point)
         }
-
-        fun timeToX(timestamp: Long): Float {
-            val progress = (timestamp - startTime).toFloat() / window24h.toFloat()
-            return paddingLeft + progress.coerceIn(0f, 1f) * plotW
-        }
-
-        // 2. Draw Horizontal BPM Grid Lines & Y Labels (60, 100, 140)
-        val guidelineBpms = intArrayOf(60, 100, 140)
-        for (gBpm in guidelineBpms) {
-            if (gBpm in minY..maxY) {
-                val y = bpmToY(gBpm)
-                gridPath.reset()
-                gridPath.moveTo(paddingLeft, y)
-                gridPath.lineTo(w - paddingRight, y)
-                canvas.drawPath(gridPath, gridPaint)
-
-                // Label on left margin
-                axisTextPaint.textAlign = Paint.Align.RIGHT
-                canvas.drawText("$gBpm", paddingLeft - (4f * density), y + (3.5f * density), axisTextPaint)
+        val segments = rawSegments.map { average(it) }
+        val paths = segments.map { segment ->
+            Path().apply {
+                moveTo(x(segment.first().timestamp), y(segment.first().bpm))
+                segment.drop(1).forEach { lineTo(x(it.timestamp), y(it.bpm)) }
             }
         }
-
-        // 3. Draw Vertical 6-Hour Time Markers & Bottom X Labels (-24j, -18j, -12j, -6j, Kini)
-        val stepCount = 4
-        axisTextPaint.textAlign = Paint.Align.CENTER
-        for (i in 0..stepCount) {
-            val x = paddingLeft + (i.toFloat() / stepCount) * plotW
-            val markTime = startTime + (i * 6 * 3600 * 1000L)
-
-            // Dotted vertical grid mark
-            gridPath.reset()
-            gridPath.moveTo(x, paddingTop)
-            gridPath.lineTo(x, h - paddingBottom)
-            canvas.drawPath(gridPath, gridPaint)
-
-            // Label at bottom: Clock hour with "-24j" start and "Kini" end
-            val label = when (i) {
-                0 -> timeFormat.format(Date(markTime)) + " (-24j)"
-                stepCount -> "Kini"
-                else -> timeFormat.format(Date(markTime))
-            }
-            canvas.drawText(label, x, h - (3f * density), axisTextPaint)
-        }
-
-        // 4. Render 24-Hour Heart Rate Waveform
-        val validPoints = heartRatePoints.filter { it.timestamp >= startTime }
-
-        if (validPoints.size >= 2) {
-            linePath.reset()
-            fillPath.reset()
-
-            val xCoords = FloatArray(validPoints.size)
-            val yCoords = FloatArray(validPoints.size)
-
-            for (i in validPoints.indices) {
-                xCoords[i] = timeToX(validPoints[i].timestamp)
-                yCoords[i] = bpmToY(validPoints[i].bpm)
-            }
-
-            linePath.moveTo(xCoords[0], yCoords[0])
-            fillPath.moveTo(xCoords[0], h - paddingBottom)
-            fillPath.lineTo(xCoords[0], yCoords[0])
-
-            // Smooth cubic Bézier spline interpolation
-            for (i in 1 until validPoints.size) {
-                val prevX = xCoords[i - 1]
-                val prevY = yCoords[i - 1]
-                val curX = xCoords[i]
-                val curY = yCoords[i]
-
-                val midX = (prevX + curX) / 2f
-                linePath.cubicTo(midX, prevY, midX, curY, curX, curY)
-                fillPath.cubicTo(midX, prevY, midX, curY, curX, curY)
-            }
-
-            val lastIdx = validPoints.size - 1
-            fillPath.lineTo(xCoords[lastIdx], h - paddingBottom)
-            fillPath.close()
-
-            // Draw Area Fill & Line
-            canvas.drawPath(fillPath, fillPaint)
-            canvas.drawPath(linePath, linePaint)
-
-            // Draw Point Markers if points <= 35
-            if (validPoints.size <= 35) {
-                for (i in validPoints.indices) {
-                    canvas.drawCircle(xCoords[i], yCoords[i], 2.5f * density, dotPaint)
+        fill.shader = LinearGradient(0f, top, 0f, bottom,
+            Color.argb(215, Color.red(areaColor), Color.green(areaColor), Color.blue(areaColor)),
+            Color.argb(125, Color.red(areaColor), Color.green(areaColor), Color.blue(areaColor)), Shader.TileMode.CLAMP)
+        canvas.save()
+        canvas.clipRect(left, top, right, bottom)
+        segments.forEachIndexed { index, segment ->
+            if (segment.size > 1) {
+                val area = Path(paths[index]).apply {
+                    lineTo(x(segment.last().timestamp), bottom)
+                    lineTo(x(segment.first().timestamp), bottom)
+                    close()
                 }
+                canvas.drawPath(area, fill)
             }
+        }
+        // Grid is drawn over the fill, matching the reference chart's clear rectangular grid.
+        repeat(6) { i -> canvas.drawLine(left, y(min + tick * i), right, y(min + tick * i), grid) }
+        repeat(5) { i ->
+            val xx = left + (right - left) * i / 4
+            canvas.drawLine(xx, top, xx, bottom, grid)
+        }
+        val avg = rawPoints.takeIf { it.isNotEmpty() }?.map { it.bpm }?.average()?.toInt()
+        avg?.let { canvas.drawLine(left, y(it), right, y(it), averageLine) }
+        paths.forEach { canvas.drawPath(it, line) }
+        canvas.restore()
 
-            // Draw prominent latest reading pulse dot at end
-            val lastX = xCoords[lastIdx]
-            val lastY = yCoords[lastIdx]
-            canvas.drawCircle(lastX, lastY, 5.5f * density, dotOuterPaint)
-            canvas.drawCircle(lastX, lastY, 2.8f * density, dotPaint)
+        fun marker(point: HeartRateEntity, radius: Float = 4.5f * d) {
+            canvas.drawCircle(x(point.timestamp), y(point.bpm), radius, markerFill)
+            canvas.drawCircle(x(point.timestamp), y(point.bpm), radius, line)
+            canvas.drawCircle(x(point.timestamp), y(point.bpm), 1.4f * d, dot)
+        }
+        segments.forEach { if (it.size == 1) marker(it.first(), 3.5f * d) }
+        segments.firstOrNull()?.takeIf { it.size > 1 }?.first()?.let { marker(it) }
+        segments.lastOrNull()?.takeIf { it.size > 1 }?.last()?.let { marker(it) }
 
-        } else if (validPoints.size == 1) {
-            // Single point received: draw reference line through point
-            val x = timeToX(validPoints[0].timestamp)
-            val y = bpmToY(validPoints[0].bpm)
-
-            gridPath.reset()
-            gridPath.moveTo(paddingLeft, y)
-            gridPath.lineTo(w - paddingRight, y)
-            canvas.drawPath(gridPath, linePaint)
-
-            canvas.drawCircle(x, y, 6f * density, dotOuterPaint)
-            canvas.drawCircle(x, y, 3f * density, dotPaint)
-
-            emptyTextPaint.textSize = 10f * density
-            canvas.drawText("Pengukuran tunggal: ${validPoints[0].bpm} BPM", w / 2f, h / 2f - (8f * density), emptyTextPaint)
-
-        } else {
-            // No data in last 24h: draw subtle circadian rhythm baseline simulation
-            drawCircadianBaselinePreview(canvas, paddingLeft, paddingTop, plotW, plotH)
+        label.textAlign = Paint.Align.RIGHT
+        repeat(6) { i ->
+            val value = min + tick * i
+            canvas.drawText("$value", left - 8 * d, y(value) + 4 * d, label)
+        }
+        label.textAlign = Paint.Align.LEFT
+        canvas.drawText("BPM", left, 20 * d, label)
+        repeat(5) { i ->
+            val t = start + duration * i / 4
+            label.textAlign = when (i) { 0 -> Paint.Align.LEFT; 4 -> Paint.Align.RIGHT; else -> Paint.Align.CENTER }
+            canvas.drawText(if (i == 4) "Kini" else (if (windowHours > 24) date else time).format(Date(t)),
+                left + (right - left) * i / 4, height - 8 * d, label)
+        }
+        if (rawPoints.isEmpty()) {
+            label.textAlign = Paint.Align.CENTER
+            canvas.drawText("Belum ada riwayat detak jantung", (left + right) / 2, (top + bottom) / 2, label)
+            return
+        }
+        label.textAlign = Paint.Align.RIGHT
+        if (selected == null) canvas.drawText("Rata-rata $avg BPM", right, 20 * d, label)
+        selected?.takeIf { it.timestamp in start..now }?.let { point ->
+            canvas.drawLine(x(point.timestamp), top, x(point.timestamp), bottom, grid)
+            marker(point)
+            val text = "${date.format(Date(point.timestamp))} ${time.format(Date(point.timestamp))}  ·  ${point.bpm} BPM"
+            val boxWidth = label.measureText(text) + 16 * d
+            canvas.drawRoundRect(right - boxWidth, 2 * d, right, 27 * d, 6 * d, 6 * d, bubble)
+            canvas.drawText(text, right - 8 * d, 19 * d, label)
         }
     }
-
-    private fun drawCircadianBaselinePreview(
-        canvas: Canvas,
-        startX: Float,
-        topY: Float,
-        width: Float,
-        height: Float
-    ) {
-        val previewPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = 1.6f * density
-            color = Color.parseColor("#334155")
-            pathEffect = DashPathEffect(floatArrayOf(5f * density, 5f * density), 0f)
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_MOVE) {
+            val now = System.currentTimeMillis(); val duration = windowHours * 3_600_000L
+            val target = now - duration + (((event.x - 36 * d) / (width - 48 * d)).coerceIn(0f, 1f) * duration).toLong()
+            selected = records.filter { it.timestamp in (now - duration)..now }.minByOrNull { abs(it.timestamp - target) }
+            invalidate(); return true
         }
-
-        val path = Path()
-        val segments = 16
-        val midY = topY + (height * 0.58f)
-
-        for (i in 0..segments) {
-            val progress = i.toFloat() / segments
-            val x = startX + progress * width
-            // Circadian curve dipping in the morning/night and slightly higher in afternoon
-            val wave = Math.sin((progress * 2 * Math.PI) - (Math.PI / 2)).toFloat()
-            val y = midY + (wave * 8f * density)
-
-            if (i == 0) {
-                path.moveTo(x, y)
-            } else {
-                path.lineTo(x, y)
-            }
-        }
-        canvas.drawPath(path, previewPaint)
-
-        canvas.drawText(
-            "Belum ada rekaman riwayat 24 jam",
-            startX + (width / 2f),
-            midY - (12f * density),
-            emptyTextPaint
-        )
+        if (event.actionMasked == MotionEvent.ACTION_UP) { performClick(); return true }
+        return super.onTouchEvent(event)
+    }
+    override fun performClick(): Boolean {
+        super.performClick()
+        selected?.let { announceForAccessibility("${date.format(Date(it.timestamp))} ${time.format(Date(it.timestamp))}, ${it.bpm} BPM") }
+        return true
     }
 }

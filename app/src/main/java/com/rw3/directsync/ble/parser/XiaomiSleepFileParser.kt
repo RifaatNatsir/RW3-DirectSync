@@ -76,6 +76,8 @@ object XiaomiSleepFileParser {
             }
         }
         var totals: List<Int>? = null
+        var sleepStarted = false
+        var wakeConfirmed = false
         val stages = mutableListOf<SleepStageEntity>()
         while (b.remaining() >= 17) {
             if (b.get(b.position()) != 0xfb.toByte() || b.get(b.position() + 1) != 0xfa.toByte() ||
@@ -88,7 +90,18 @@ object XiaomiSleepFileParser {
             b.u8() // parity
             val type = b.u8()
             val size = (b.u8() shl 8) or b.u8()
-            if (type in listOf(2, 3, 9, 12, 13, 14, 15)) continue
+            if (type in listOf(2, 3, 9, 12, 13, 14, 15)) {
+                // RW3 sends these event timestamps in milliseconds, unlike type 16/17 seconds.
+                val time = when {
+                    timestamp in start..end -> timestamp
+                    timestamp in (start / 1000)..(end / 1000) -> timestamp * 1000
+                    timestamp / 1_000_000 in start..end -> timestamp / 1_000_000
+                    else -> null
+                }
+                if (type == 2 && time != null && time < end) sleepStarted = true
+                if (type == 3 && time == end) wakeConfirmed = true
+                continue
+            }
             require(size <= b.remaining()) { "Paket fase tidur terpotong" }
             val body = b.slice().order(ByteOrder.BIG_ENDIAN).apply { limit(size) }
             b.skip(size)
@@ -110,8 +123,17 @@ object XiaomiSleepFileParser {
                 }
             }
         }
-        require(!unfinished) { "Sesi tidur di jam belum selesai" }
-        val t = requireNotNull(totals) { "Ringkasan tidur jam belum ditemukan" }
+        val closedRecording = sleepStarted && wakeConfirmed
+        require(!unfinished || closedRecording) { "Rekaman tidur belum memiliki penanda bangun yang cocok" }
+        if (totals == null) {
+            require(closedRecording) { "Ringkasan atau penanda selesai tidur belum ditemukan" }
+            // Preserve the exact completed interval reported by the watch. Phases remain unknown;
+            // raw motion/PPG packets must never be treated as classified LIGHT/DEEP/REM samples.
+            val recording = session(start, end, ((end - start) / 60_000L).toInt(),
+                0, 0, 0, 0, score, averageHr, "recording:$source").copy(hasStageData = false)
+            return Result(recording, emptyList())
+        }
+        val t = requireNotNull(totals)
         return Result(session(start, end, t[0], t[4], t[2], t[3], t[1], score, averageHr, source), stages)
     }
 

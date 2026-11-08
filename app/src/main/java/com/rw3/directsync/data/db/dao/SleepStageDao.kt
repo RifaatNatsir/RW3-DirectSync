@@ -45,6 +45,9 @@ interface SleepStageDao {
     @Query("SELECT * FROM sleep_sessions ORDER BY endTimestamp DESC LIMIT 1")
     fun observeLatestSession(): Flow<SleepSessionEntity?>
 
+    @Query("SELECT * FROM sleep_sessions ORDER BY endTimestamp DESC LIMIT 100")
+    fun observeSessions(): Flow<List<SleepSessionEntity>>
+
     @Query("SELECT * FROM sleep_sessions WHERE startTimestamp = :start LIMIT 1")
     suspend fun getSession(start: Long): SleepSessionEntity?
 
@@ -57,7 +60,11 @@ interface SleepStageDao {
     @Transaction
     suspend fun saveVerifiedSleep(session: SleepSessionEntity, stages: List<SleepStageEntity>) {
         val existing = getSession(session.startTimestamp)
+        // A sensor-only recording must not replace a classified vendor report for the same night.
+        if (existing?.hasStageData == true && !session.hasStageData) return
         if (existing != null && existing.endTimestamp > session.endTimestamp) return
+        if (existing?.sourceFileId?.startsWith("healthconnect:") == true &&
+            !session.sourceFileId.startsWith("healthconnect:") && existing.endTimestamp == session.endTimestamp) return
         // Re-fetching an identical file must not create new rows or reset export status.
         if (existing == session) return
         if (existing != null) deleteFileStages(existing.sourceFileId)

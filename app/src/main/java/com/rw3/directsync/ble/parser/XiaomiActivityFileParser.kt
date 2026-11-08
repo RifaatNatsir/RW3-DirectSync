@@ -48,7 +48,8 @@ object XiaomiActivityFileParser {
             if (valid(header, slot)) values[slot] = value
         }
         return ActivityRecordEntity(id = "daily:$source", category = "daily", timestamp = timestamp,
-            steps = values[0]?.takeIf { it >= 0 }, calories = values[1],
+            // RW3 v3 reports calories immediately after steps; the later v5 layout uses slot 13.
+            steps = values[0]?.takeIf { it >= 0 }, calories = values[if (version == 3) 1 else 13],
             restingHeartRate = hr(values[3]), averageHeartRate = hr(values[8]),
             minHeartRate = hr(values[6]), maxHeartRate = hr(values[4]),
             stress = values[9]?.takeIf { it in 1..100 }, spo2 = oxygen(values[20]),

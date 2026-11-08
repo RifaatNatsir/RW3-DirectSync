@@ -18,8 +18,8 @@ class XiaomiActivityFileParserTest {
     @Test fun dailyV3MatchesCapturedLayoutAndValidity() {
         // Same layout and validity mask as the captured RW3 summary; no user timestamps.
         val body = ByteArray(44)
-        body[0] = 0xd0.toByte(); body[1] = 8
-        ByteBuffer.wrap(body).order(ByteOrder.LITTLE_ENDIAN).putInt(3, 398).putShort(7, 87)
+        body[0] = 0xd0.toByte(); body[1] = 12
+        ByteBuffer.wrap(body).order(ByteOrder.LITTLE_ENDIAN).putInt(3, 398).putShort(7, 87).putShort(28, 999)
         body[10] = 67; body[25] = 0x80.toByte(); body[26] = 15
         val record = XiaomiActivityFileParser.parse(file(3, 1, body)).single()
         assertEquals(398, record.steps); assertEquals(87, record.calories)
@@ -33,6 +33,14 @@ class XiaomiActivityFileParserTest {
         val record = XiaomiActivityFileParser.parse(file(3, 1, body)).single()
         assertNull(record.steps); assertNull(record.calories); assertNull(record.restingHeartRate)
         assertNull(record.standingHours); assertNull(record.spo2)
+    }
+
+    @Test fun v5CaloriesUseLaterSlotRatherThanV3Slot() {
+        val body = ByteArray(61)
+        body[0] = 0xc0.toByte(); body[1] = 4
+        ByteBuffer.wrap(body).order(ByteOrder.LITTLE_ENDIAN).putInt(4, 398).putShort(8, 999).putShort(29, 87)
+        val record = XiaomiActivityFileParser.parse(file(5, 1, body)).single()
+        assertEquals(398, record.steps); assertEquals(87, record.calories)
     }
 
     @Test fun manualV1CapturesHeartRateAndOxygenSeparately() {

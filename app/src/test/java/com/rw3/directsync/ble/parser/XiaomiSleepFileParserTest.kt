@@ -77,6 +77,41 @@ class XiaomiSleepFileParserTest {
         assertEquals(end * 1000L, parsed.stages.last().endTimestamp)
     }
 
+    private fun sensorEvent(type: Int, timestamp: Long): ByteArray =
+        ByteBuffer.allocate(17).order(ByteOrder.LITTLE_ENDIAN)
+            .putInt(0xfffcfafb.toInt()).put(17).putLong(timestamp).put(0)
+            .put(type.toByte()).putShort(0).array()
+
+    private fun closedSensorFile(wake: Long = end * 1000): ByteArray {
+        val header = ByteBuffer.allocate(11).order(ByteOrder.LITTLE_ENDIAN)
+            .put(0x80.toByte()).put(1).putInt(start.toInt()).putInt(end.toInt()).put(0).array()
+        return wrap(header + sensorEvent(2, start * 1000) + sensorEvent(3, wake), 8, 4)
+    }
+
+    @Test fun rw3ClosedSensorRecordingDoesNotGetRejectedByAmbiguousFinishFlag() {
+        val parsed = XiaomiSleepFileParser.parse(closedSensorFile())
+        assertEquals(449, parsed.session.totalMinutes)
+        assertEquals(start * 1000, parsed.session.startTimestamp)
+        assertEquals(end * 1000, parsed.session.endTimestamp)
+        assertFalse(parsed.session.hasStageData)
+        assertTrue(parsed.stages.isEmpty())
+        assertNull(parsed.session.sleepScore)
+        assertTrue(parsed.session.sourceFileId.startsWith("recording:"))
+    }
+
+    @Test fun rawRecordingWithoutMatchingWakeRemainsUnverified() {
+        assertThrows(IllegalArgumentException::class.java) {
+            XiaomiSleepFileParser.parse(closedSensorFile(end * 1000 - 60_000))
+        }
+    }
+
+    @Test fun closedEventsAlsoAcceptSecondTimestamps() {
+        val header = ByteBuffer.allocate(11).order(ByteOrder.LITTLE_ENDIAN)
+            .put(0).put(1).putInt(start.toInt()).putInt(end.toInt()).put(0).array()
+        val parsed = XiaomiSleepFileParser.parse(wrap(header + sensorEvent(2, start) + sensorEvent(3, end), 8, 4))
+        assertEquals(449, parsed.session.totalMinutes)
+    }
+
     @Test fun transferCompletesOnlyOnce() {
         val file = stagesFile()
         val transfer = XiaomiActivityTransfer()

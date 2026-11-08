@@ -13,7 +13,7 @@ interface HeartRateDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(record: HeartRateEntity): Long
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(records: List<HeartRateEntity>)
 
     @Query("SELECT * FROM heart_rate_records WHERE synced_to_webhook = 0 ORDER BY timestamp ASC LIMIT :limit")

@@ -13,20 +13,24 @@ import com.rw3.directsync.data.db.dao.SleepStageDao
 import com.rw3.directsync.data.db.entity.HeartRateEntity
 import com.rw3.directsync.data.db.entity.SleepStageEntity
 import com.rw3.directsync.data.db.entity.SleepSessionEntity
+import com.rw3.directsync.data.db.entity.DailyActivityMinuteEntity
+import com.rw3.directsync.data.db.dao.DailyActivityMinuteDao
 
 @Database(
     entities = [
         HeartRateEntity::class,
         SleepStageEntity::class,
         SleepSessionEntity::class,
-        ActivityRecordEntity::class
+        ActivityRecordEntity::class,
+        DailyActivityMinuteEntity::class
     ],
-    version = 3,
+    version = 5,
     exportSchema = false
 )
 abstract class Rw3Database : RoomDatabase() {
 
     abstract fun activityRecordDao(): ActivityRecordDao
+    abstract fun dailyActivityMinuteDao(): DailyActivityMinuteDao
     abstract fun heartRateDao(): HeartRateDao
     abstract fun sleepStageDao(): SleepStageDao
 
@@ -62,6 +66,18 @@ abstract class Rw3Database : RoomDatabase() {
         @Volatile
         private var INSTANCE: Rw3Database? = null
 
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE sleep_sessions ADD COLUMN hasStageData INTEGER NOT NULL DEFAULT 1")
+            }
+        }
+
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS daily_activity_minutes (timestamp INTEGER NOT NULL PRIMARY KEY, steps INTEGER, calories INTEGER, sourceFileId TEXT NOT NULL)")
+            }
+        }
+
         fun getDatabase(context: Context): Rw3Database {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -69,7 +85,7 @@ abstract class Rw3Database : RoomDatabase() {
                     Rw3Database::class.java,
                     DATABASE_NAME
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build()
                 INSTANCE = instance
                 instance
