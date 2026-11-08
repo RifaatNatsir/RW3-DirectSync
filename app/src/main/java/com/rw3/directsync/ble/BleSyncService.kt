@@ -40,8 +40,10 @@ import android.view.KeyEvent
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
+import com.rw3.directsync.ble.parser.XiaomiActivityRequestQueue
 import com.rw3.directsync.ble.parser.XiaomiActivityTransfer
 import com.rw3.directsync.ble.parser.XiaomiActivityFileParser
+import com.rw3.directsync.ble.parser.XiaomiHeartRateHistoryParser
 import com.rw3.directsync.ble.parser.XiaomiSleepFileParser
 import com.rw3.directsync.ble.protocol.XiaomiWearProtocolEngine
 import com.rw3.directsync.data.db.Rw3Database
@@ -49,6 +51,8 @@ import com.rw3.directsync.data.db.entity.HeartRateEntity
 import com.rw3.directsync.network.WebhookDispatcher
 import com.rw3.directsync.notification.Rw3NotificationListenerService
 import com.rw3.directsync.ui.MainActivity
+import com.rw3.directsync.watchface.WatchfaceTransferManager
+import com.rw3.directsync.watchface.WatchfaceTransferState
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -109,6 +113,7 @@ class BleSyncService : LifecycleService() {
         const val ACTION_MEDIA_PAUSE = "com.rw3.directsync.action.MEDIA_PAUSE"
         const val ACTION_MEDIA_NEXT = "com.rw3.directsync.action.MEDIA_NEXT"
         const val ACTION_MEDIA_PREV = "com.rw3.directsync.action.MEDIA_PREV"
+        const val ACTION_QUERY_WATCHFACES = "com.rw3.directsync.action.QUERY_WATCHFACES"
 
         const val EXTRA_MAC_ADDRESS = "extra_mac_address"
         const val EXTRA_AUTH_KEY = "extra_auth_key"
@@ -219,18 +224,16 @@ class BleSyncService : LifecycleService() {
 
     // Activity / Sleep File Fetching Buffer
     private val activityTransfer = XiaomiActivityTransfer()
-    private var activeActivityFileId: ByteArray? = null
-    private val seenActivityFileIds = mutableSetOf<String>()
+    private val activityRequests = XiaomiActivityRequestQueue()
+    private val activeActivityFileId get() = activityRequests.active
     private var requestedAlternateActivityList = false
     private var receivedSleepFile = false
     private val activityHandler = Handler(Looper.getMainLooper())
+    private val autoHistorySync = Runnable { triggerSleepDataSync(0) }
+    private var lastHistorySyncRequest = 0L
     private val activityTimeout = Runnable {
-        appendLog("Unduhan file tidur melewati batas waktu; file tidak disimpan.")
-        activeActivityFileId = null
-        activityTransfer.reset()
-        requestNextActivityFile()
+        retryActivityFile()
     }
-    private val pendingActivityFileIds = ArrayDeque<ByteArray>()
 
     private val _syncState = MutableStateFlow<SyncState>(SyncState.Idle)
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
@@ -255,6 +258,133 @@ class BleSyncService : LifecycleService() {
 
     private val _currentMediaState = MutableStateFlow(MediaPlaybackInfo())
     val currentMediaState: StateFlow<MediaPlaybackInfo> = _currentMediaState.asStateFlow()
+
+    private val _installedWatchfaces = MutableStateFlow<List<XiaomiWearProtocolEngine.WatchfaceItem>>(emptyList())
+    val installedWatchfaces: StateFlow<List<XiaomiWearProtocolEngine.WatchfaceItem>> = _installedWatchfaces.asStateFlow()
+
+    private val watchfaceSender = object : WatchfaceTransferManager.TransportSender {
+        override fun sendInstallStart(watchfaceId: String, sizeBytes: Int): Boolean {
+            val engine = protocolEngine ?: return false
+            val cmd = engine.buildWatchfaceInstallStartCommand(watchfaceId, sizeBytes)
+            dispatchXiaomiProtoCommand("Watchface Install Start ($watchfaceId)", cmd)
+            return true
+        }
+
+        override fun sendDataUploadRequest(md5Bytes: ByteArray, sizeBytes: Int): Boolean {
+            val engine = protocolEngine ?: return false
+            val cmd = engine.buildDataUploadRequestCommand(md5Bytes, sizeBytes)
+            dispatchXiaomiProtoCommand("Data Upload Request", cmd)
+            return true
+        }
+
+        override fun sendDataChunk(chunk: ByteArray, channel: Int): Boolean {
+            val engine = protocolEngine ?: return false
+            if (sppSocket?.isConnected == true) {
+                val frame = if (sppProtocolVersion >= 2) {
+                    engine.encodeSppV2DataChunk(chunk, channel = 2)
+                } else {
+                    engine.encodeSppV1MassDataChunk(chunk, channel = 5)
+                }
+                return writeSppBytes("Watchface Chunk (${chunk.size}b)", frame)
+            }
+            return false
+        }
+
+        override fun sendInstallFinish(watchfaceId: String): Boolean {
+            val engine = protocolEngine ?: return false
+            val cmd = engine.buildWatchfaceInstallFinishCommand(watchfaceId)
+            dispatchXiaomiProtoCommand("Watchface Install Finish ($watchfaceId)", cmd)
+            return true
+        }
+
+        override fun sendWatchfaceSet(watchfaceId: String): Boolean {
+            val engine = protocolEngine ?: return false
+            val cmd = engine.buildWatchfaceSetCommand(watchfaceId)
+            dispatchXiaomiProtoCommand("Watchface Set ($watchfaceId)", cmd)
+            queryWatchfaceList()
+            requestNextActivityFile()
+            return true
+        }
+
+        override fun appendLog(message: String) {
+            this@BleSyncService.appendLog(message)
+        }
+    }
+
+    private val watchfaceTransferManager by lazy {
+        WatchfaceTransferManager(lifecycleScope, watchfaceSender)
+    }
+
+    val watchfaceTransferState: StateFlow<WatchfaceTransferState>
+        get() = watchfaceTransferManager.transferState
+
+    fun queryWatchfaceList() {
+        val engine = protocolEngine ?: return
+        if (!engine.isEncryptionInitialized) {
+            appendLog("[Watchface] Jam belum terautentikasi (tunggu koneksi serial siap).")
+            return
+        }
+        appendLog("[Watchface] Mengambil daftar watchface terpasang dari jam...")
+        dispatchXiaomiProtoCommand("Watchface List Query (type=4, subtype=0)", engine.buildWatchfaceListQueryCommand())
+    }
+
+    fun setActiveWatchface(watchfaceId: String) {
+        val engine = protocolEngine ?: return
+        if (!engine.isEncryptionInitialized) return
+        appendLog("[Watchface] Mengaktifkan watchface '$watchfaceId' di jam tangan...")
+        dispatchXiaomiProtoCommand("Watchface Set ($watchfaceId)", engine.buildWatchfaceSetCommand(watchfaceId))
+    }
+
+    fun deleteWatchface(watchfaceId: String) {
+        val engine = protocolEngine ?: return
+        if (!engine.isEncryptionInitialized) return
+        appendLog("[Watchface] Menghapus watchface '$watchfaceId' dari jam tangan...")
+        dispatchXiaomiProtoCommand("Watchface Delete ($watchfaceId)", engine.buildWatchfaceDeleteCommand(watchfaceId))
+    }
+
+    fun startWatchfaceUpload(watchfaceId: String, data: ByteArray) {
+        if (protocolEngine?.isEncryptionInitialized != true || sppSocket?.isConnected != true) {
+            appendLog("[Watchface] Unggah memerlukan koneksi SPP terenkripsi yang aktif.")
+            return
+        }
+        lifecycleScope.launch {
+            val existing = _installedWatchfaces.value.find { it.id == watchfaceId && it.canDelete }
+            if (existing != null) {
+                appendLog("[Watchface] Menghapus versi lama '$watchfaceId' sebelum memasang wallpaper baru...")
+                val engine = protocolEngine
+                if (engine != null) {
+                    dispatchXiaomiProtoCommand(
+                        "Watchface Delete ($watchfaceId)",
+                        engine.buildWatchfaceDeleteCommand(watchfaceId)
+                    )
+                    delay(450)
+                }
+            }
+            watchfaceTransferManager.startUpload(watchfaceId, data)
+        }
+    }
+
+    fun cancelWatchfaceUpload() {
+        watchfaceTransferManager.cancelTransfer()
+        requestNextActivityFile()
+    }
+
+    fun autoConnectFromSavedPrefsIfIdle() {
+        if (_syncState.value !is SyncState.Idle || userRequestedStop) return
+        val prefs = getSharedPreferences("rw3_directsync_prefs", Context.MODE_PRIVATE)
+        val mac = prefs.getString("mac_address", "82:77:16:9E:07:01")?.trim()?.uppercase()
+        val authKey = prefs.getString("auth_key", "02b39353986a04abbc3509ecabc235e7")?.trim()
+        val webhook = prefs.getString("webhook_url", null)?.trim()
+        if (!mac.isNullOrEmpty() && !authKey.isNullOrEmpty()) {
+            val startIntent = Intent(this, BleSyncService::class.java).apply {
+                action = ACTION_START_SYNC
+                putExtra(EXTRA_MAC_ADDRESS, mac)
+                putExtra(EXTRA_AUTH_KEY, authKey)
+                putExtra(EXTRA_WEBHOOK_URL, webhook)
+            }
+            androidx.core.content.ContextCompat.startForegroundService(this, startIntent)
+        }
+    }
 
     private val _discoveredDevices = MutableStateFlow<List<DiscoveredBleDevice>>(emptyList())
     val discoveredDevices: StateFlow<List<DiscoveredBleDevice>> = _discoveredDevices.asStateFlow()
@@ -384,6 +514,7 @@ class BleSyncService : LifecycleService() {
             ACTION_MEDIA_PAUSE -> sendMediaPause()
             ACTION_MEDIA_NEXT -> sendMediaNext()
             ACTION_MEDIA_PREV -> sendMediaPrevious()
+            ACTION_QUERY_WATCHFACES -> queryWatchfaceList()
         }
         return START_REDELIVER_INTENT
     }
@@ -622,7 +753,7 @@ class BleSyncService : LifecycleService() {
             closeSppSocket()
             activityHandler.removeCallbacks(activityTimeout)
             activityTransfer.reset()
-            activeActivityFileId = null
+            activityRequests.reset()
             if (!userRequestedStop) {
                 _syncState.value = SyncState.Disconnected("Koneksi serial terputus", willReconnect = true)
                 scheduleReconnect("Koneksi serial terputus")
@@ -1712,10 +1843,24 @@ class BleSyncService : LifecycleService() {
 
                 // 3. Sinkronisasikan status media/musik HP ke layar Redmi Watch 3
                 refreshMediaSessions(forcePush = true)
+
+                // 4. Ambil daftar watchface terpasang dari jam
+                queryWatchfaceList()
+
+                // Retrieve measurements recorded while the phone was disconnected on every reconnect.
+                activityHandler.removeCallbacks(autoHistorySync)
+                activityHandler.postDelayed(autoHistorySync, 1_500L)
             }
 
             is XiaomiWearProtocolEngine.DecodedWatchEvent.RealtimeHeartRate -> {
-                appendLog("Detak Jantung: ${event.bpm} BPM | Langkah: ${event.steps}")
+                appendLog("Detak Jantung: ${event.bpm} BPM | Langkah: ${event.steps ?: "-"} | Kalori: ${event.calories ?: "-"}")
+                val now = java.time.ZonedDateTime.now()
+                val start = now.toLocalDate().atStartOfDay(now.zone)
+                lifecycleScope.launch(ioDispatcher) {
+                    db.activityRecordDao().saveDailyTotals(now.toInstant().toEpochMilli(),
+                        event.steps?.takeIf { it >= 0 }, event.calories?.takeIf { it >= 0 },
+                        start.toInstant().toEpochMilli(), start.plusDays(1).toInstant().toEpochMilli())
+                }
                 if (event.bpm in 30..240) {
                     saveHeartRateRecord(event.bpm)
                 } else {
@@ -1732,9 +1877,8 @@ class BleSyncService : LifecycleService() {
                 appendLog("Menerima ${event.fileIds.size} file riwayat tidur/aktivitas dari jam.")
                 for (id in event.fileIds) {
                     appendLog("File jam: ${id.toHex()} (sleep=${XiaomiSleepFileParser.isSleepFile(id)})")
-                    if ((XiaomiSleepFileParser.isSleepFile(id) || XiaomiActivityFileParser.accepts(id)) && seenActivityFileIds.add(id.toHex())) {
+                    if ((XiaomiSleepFileParser.isSleepFile(id) || XiaomiActivityFileParser.accepts(id) || XiaomiHeartRateHistoryParser.accepts(id)) && activityRequests.offer(id)) {
                         if (XiaomiSleepFileParser.isSleepFile(id)) receivedSleepFile = true
-                        pendingActivityFileIds.addLast(id)
                     }
                 }
                 if (event.subtype == XiaomiWearProtocolEngine.CMD_SUBTYPE_ACTIVITY_FETCH_TODAY) {
@@ -1773,6 +1917,34 @@ class BleSyncService : LifecycleService() {
                 handleMediaKeyFromWatch(event.key, event.volume)
             }
 
+            is XiaomiWearProtocolEngine.DecodedWatchEvent.WatchfaceListReceived -> {
+                appendLog("[Watchface] Diterima ${event.watchfaces.size} watchface dari jam.")
+                for (wf in event.watchfaces) {
+                    appendLog("[Watchface] -> ${wf.name} (id=${wf.id}, aktif=${wf.isActive}, canDelete=${wf.canDelete})")
+                }
+                _installedWatchfaces.value = event.watchfaces
+            }
+
+            is XiaomiWearProtocolEngine.DecodedWatchEvent.WatchfaceActiveChanged -> {
+                appendLog("[Watchface] Watchface aktif diubah ke '${event.id}' (sukses=${event.success}).")
+                queryWatchfaceList()
+            }
+
+            is XiaomiWearProtocolEngine.DecodedWatchEvent.WatchfaceDeleted -> {
+                appendLog("[Watchface] Watchface '${event.id}' dihapus (sukses=${event.success}).")
+                queryWatchfaceList()
+            }
+
+            is XiaomiWearProtocolEngine.DecodedWatchEvent.WatchfaceInstallStatusReceived -> {
+                appendLog("[Watchface] Status instalasi '${event.id}': ${event.status}")
+                watchfaceTransferManager.onInstallStatusReceived(event.status)
+            }
+
+            is XiaomiWearProtocolEngine.DecodedWatchEvent.DataUploadAckReceived -> {
+                appendLog("[DataUpload] ACK diterima: resumePos=${event.resumePosition}, chunkSize=${event.chunkSize}")
+                watchfaceTransferManager.onDataUploadAckReceived(event.resumePosition, event.chunkSize)
+            }
+
             is XiaomiWearProtocolEngine.DecodedWatchEvent.RawCommand -> {
                 // Ignore raw background internal pings
             }
@@ -1780,17 +1952,31 @@ class BleSyncService : LifecycleService() {
     }
 
     @Synchronized
+    private fun retryActivityFile() {
+        activityTransfer.reset()
+        val retry = activityRequests.retry()
+        if (retry != null) {
+            appendLog("Mengulang unduhan aktivitas ${retry.toHex()}; file yang diminta belum diterima.")
+            protocolEngine?.let { dispatchXiaomiProtoCommand("Retry Activity File", it.buildRequestActivityFileCommand(retry)) }
+            activityHandler.removeCallbacks(activityTimeout)
+            activityHandler.postDelayed(activityTimeout, 15_000L)
+        } else {
+            appendLog("Melanjutkan antrean aktivitas setelah batas percobaan unduhan.")
+            requestNextActivityFile()
+        }
+    }
+
+    @Synchronized
     private fun requestNextActivityFile() {
-        if (activeActivityFileId != null) return
+        if (watchfaceTransferManager.isTransferActive()) return
+        if (activeActivityFileId != null || activityTransfer.bytesBuffered > 0) return
         val engine = protocolEngine ?: return
-        val nextId = pendingActivityFileIds.removeFirstOrNull()
+        val nextId = activityRequests.next()
         if (nextId == null) {
             appendLog("Antrean file aktivitas selesai. Menunggu daftar/permintaan berikutnya.")
             if (_syncState.value is SyncState.SyncingSleep) _syncState.value = SyncState.Authenticated
             return
         }
-        activeActivityFileId = nextId
-        activityTransfer.begin(nextId)
         appendLog("Meminta unduhan file aktivitas ID: ${nextId.toHex()}...")
         activityHandler.removeCallbacks(activityTimeout)
         activityHandler.postDelayed(activityTimeout, 15_000L)
@@ -1808,10 +1994,7 @@ class BleSyncService : LifecycleService() {
             }
             appendLog("Transfer tidur ditolak: ${e.message}")
             activityHandler.removeCallbacks(activityTimeout)
-            activeActivityFileId = null
-            activityTransfer.reset()
-            _syncState.value = SyncState.Error("Transfer tidur tidak valid; coba sinkronkan ulang")
-            requestNextActivityFile()
+            retryActivityFile()
             return
         }
         activityHandler.removeCallbacks(activityTimeout)
@@ -1820,17 +2003,30 @@ class BleSyncService : LifecycleService() {
             _syncState.value = SyncState.SyncingSleep(activityTransfer.bytesBuffered)
             return
         }
-        activeActivityFileId = null
+        if (activeActivityFileId != null) activityHandler.postDelayed(activityTimeout, 15_000L)
         lifecycleScope.launch(ioDispatcher) {
+            var verified = false
             try {
                 java.io.File(cacheDir, "last_activity_file.bin").writeBytes(data)
                 val crc = java.util.zip.CRC32().apply { update(data, 0, data.size - 4) }.value
                 val expected = ByteBuffer.wrap(data, data.size - 4, 4).order(ByteOrder.LITTLE_ENDIAN).int.toLong() and 0xffffffffL
                 require(crc == expected) { "Checksum aktivitas tidak sesuai" }
+                verified = true
                 val archive = java.io.File(cacheDir, "activity_diagnostics").apply { mkdirs() }
                 java.io.File(archive, data.copyOfRange(0, 7).toHex().replace(" ", "") + ".bin").writeBytes(data)
                 archive.listFiles()?.sortedByDescending { it.lastModified() }?.drop(32)?.forEach { it.delete() }
                 appendLog("File diterima: ${data.copyOfRange(0, 7).toHex()}, ${data.size} bytes, CRC valid")
+                if (XiaomiSleepFileParser.isSleepFile(data.copyOfRange(0, 7))) {
+                    receivedSleepFile = true
+                }
+                if (XiaomiHeartRateHistoryParser.accepts(data.copyOfRange(0, 7))) {
+                    val parsed = XiaomiHeartRateHistoryParser.parseDailyDetails(data)
+                    db.dailyActivityMinuteDao().merge(parsed.minutes)
+                    db.heartRateDao().insertAll(parsed.heartRates)
+                    db.activityRecordDao().insert(listOf(parsed.summary))
+                    appendLog("Detail harian tersimpan: ${parsed.summary.steps ?: "-"} langkah, ${parsed.summary.calories ?: "-"} kkal, ${parsed.heartRates.size} sampel HR.")
+                    return@launch
+                }
                 if (!XiaomiSleepFileParser.isSleepFile(data.copyOfRange(0, 7))) {
                     if (!XiaomiActivityFileParser.accepts(data.copyOfRange(0, 7))) {
                         appendLog("Jenis file aktivitas belum didukung; file diagnostik disimpan tanpa membuat metrik.")
@@ -1843,6 +2039,7 @@ class BleSyncService : LifecycleService() {
                         db.heartRateDao().insertAll(
                             manualHrs.map {
                                 HeartRateEntity(
+                                    id = -it.timestamp,
                                     timestamp = it.timestamp,
                                     bpm = it.averageHeartRate!!,
                                     syncedToWebhook = false
@@ -1863,9 +2060,16 @@ class BleSyncService : LifecycleService() {
                 throw e
             } catch (e: Exception) {
                 appendLog("File aktivitas ditolak: ${e.message}")
-                _syncState.value = SyncState.Error("File aktivitas belum dapat dibaca: ${e.message}")
+                // A partial/unsupported watch file does not mean the Bluetooth connection failed.
+                _syncState.value = SyncState.Authenticated
             } finally {
-                requestNextActivityFile()
+                if (verified) activityRequests.complete(data.copyOfRange(0, 7))
+                activityHandler.post {
+                    if (activeActivityFileId == null) {
+                        activityHandler.removeCallbacks(activityTimeout)
+                        requestNextActivityFile()
+                    }
+                }
             }
         }
     }
@@ -2071,17 +2275,20 @@ class BleSyncService : LifecycleService() {
             appendLog("Unduhan aktivitas masih berjalan.")
             return
         }
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (lastHistorySyncRequest != 0L && now - lastHistorySyncRequest < 10_000L) return
+        lastHistorySyncRequest = now
         activityTransfer.reset()
-        pendingActivityFileIds.clear()
-        seenActivityFileIds.clear()
+        activityRequests.reset()
         requestedAlternateActivityList = false
         receivedSleepFile = false
-        appendLog("Meminta tidur, ringkasan harian, pengukuran manual, dan riwayat olahraga dari jam.")
+        appendLog("Meminta riwayat HR offline, tidur, ringkasan harian, pengukuran manual, dan olahraga dari jam.")
         _syncState.value = SyncState.SyncingSleep(bytesBuffered = 0)
         updateForegroundNotification("Sinkronisasi data tidur & aktivitas...")
 
         val fetchTodayCmd = engine.buildFetchActivityTodayCommand()
         dispatchXiaomiProtoCommand("Fetch Recorded Sleep/Activity Today (type=8, subtype=1)", fetchTodayCmd)
+
     }
 
     fun triggerWebhookExport(webhookUrl: String) {

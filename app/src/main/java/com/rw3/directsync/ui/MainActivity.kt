@@ -44,9 +44,14 @@ import androidx.recyclerview.widget.RecyclerView
 import com.rw3.directsync.R
 import com.rw3.directsync.ble.BleSyncService
 import com.rw3.directsync.data.db.entity.ActivityRecordEntity
+import com.rw3.directsync.data.db.entity.SleepSessionEntity
+import com.rw3.directsync.data.HealthConnectSleepImporter
 import com.rw3.directsync.databinding.ActivityMainBinding
 import com.rw3.directsync.databinding.DialogAppWhitelistBinding
 import com.rw3.directsync.databinding.ItemWhitelistAppBinding
+import com.rw3.directsync.databinding.ItemWorkoutHistoryBinding
+import com.rw3.directsync.databinding.ItemSleepHistoryBinding
+import com.rw3.directsync.databinding.DialogSleepHistoryBinding
 import com.rw3.directsync.notification.Rw3NotificationListenerService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -70,7 +75,8 @@ class MainActivity : AppCompatActivity() {
     private enum class NavTab {
         DASHBOARD,
         ACTIVITY,
-        TERMINAL
+        TERMINAL,
+        SETTINGS
     }
 
     private val viewModel: MainViewModel by viewModels()
@@ -79,6 +85,13 @@ class MainActivity : AppCompatActivity() {
     private var bleService: BleSyncService? = null
     private var serviceStateJob: Job? = null
     private var pendingActionAfterPermission: (() -> Unit)? = null
+    private var sleepImportRunning = false
+    private var sleepHistoryRecords = emptyList<SleepSessionEntity>()
+    private val sleepPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) importSleepHistory() else {
+            binding.tvSleepImportStatus.text = "Izin membaca tidur belum diberikan. Data yang sudah tersimpan tetap tersedia."
+        }
+    }
 
     private val numberFormat = NumberFormat.getNumberInstance(Locale.US)
 
@@ -103,6 +116,7 @@ class MainActivity : AppCompatActivity() {
             val localBinder = binder as? BleSyncService.LocalBinder ?: return
             val service = localBinder.getService()
             bleService = service
+            service.autoConnectFromSavedPrefsIfIdle()
             serviceStateJob?.cancel()
             serviceStateJob = lifecycleScope.launch {
                 repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -212,6 +226,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupListeners() {
+        binding.btnViewSleepHistory.setOnClickListener { showAllSleepHistory() }
+        binding.btnImportSleepHistory.setOnClickListener {
+            binding.tvSleepImportStatus.visibility = View.VISIBLE
+            if (Build.VERSION.SDK_INT < 34) {
+                binding.tvSleepImportStatus.text = "Impor Mi Fitness tersedia pada Android 14 atau lebih baru. Sinkronisasi langsung dari jam tetap tersedia."
+            } else if (ContextCompat.checkSelfPermission(this, HealthConnectSleepImporter.READ_SLEEP) == PackageManager.PERMISSION_GRANTED) {
+                importSleepHistory()
+            } else sleepPermissionLauncher.launch(HealthConnectSleepImporter.READ_SLEEP)
+        }
+        binding.btnDashboardConnect.setOnClickListener {
+            ensurePermissionsAndRun { validateAndStartBleService() }
+        }
+        binding.btnHr24h.setOnClickListener { viewModel.heartRateWindowHours.value = 24 }
+        binding.btnHr7d.setOnClickListener { viewModel.heartRateWindowHours.value = 168 }
         // Copy MAC Address
         binding.btnCopyMac.setOnClickListener {
             copyTextToClipboard("RW3-MAC", binding.tvMacAddressDisplay.text.toString())
@@ -285,6 +313,14 @@ class MainActivity : AppCompatActivity() {
             bleService?.sendMediaPrevious() ?: Toast.makeText(this, "Hubungkan jam tangan atau putar musik di HP terlebih dahulu.", Toast.LENGTH_SHORT).show()
         }
 
+        // Card Watchface & Wallpaper
+        binding.cardWatchfaceWallpaper.setOnClickListener {
+            startActivity(Intent(this, WatchfaceActivity::class.java))
+        }
+        binding.btnOpenWatchfaceManager.setOnClickListener {
+            startActivity(Intent(this, WatchfaceActivity::class.java))
+        }
+
         // Card 7: Sync Semua Data (Sleep, Workouts, Activities, Battery)
         binding.btnSyncAll.setOnClickListener {
             triggerSyncAll()
@@ -324,7 +360,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.navTabSettings.setOnClickListener {
-            showCredentialsSettingsDialog()
+            selectTab(NavTab.SETTINGS)
         }
     }
 
@@ -332,7 +368,33 @@ class MainActivity : AppCompatActivity() {
         val mint = ContextCompat.getColor(this, R.color.primary_mint)
         val muted = ContextCompat.getColor(this, R.color.on_surface_variant)
 
+        val settings = tab == NavTab.SETTINGS
+        binding.layoutDashboardContainer.requestFocus()
+        binding.layoutOverviewHeading.visibility = if (tab == NavTab.DASHBOARD) View.VISIBLE else View.GONE
+        listOf(binding.cardDeviceIdentity, binding.cardSmartNotifications,
+            binding.cardMediaAndAutoReconnect, binding.cardWatchfaceWallpaper, binding.cardTelemetryPipeline).forEach {
+            it.visibility = if (settings) View.VISIBLE else View.GONE
+        }
+        binding.cardHeartRateStream.visibility = if (tab == NavTab.DASHBOARD) View.VISIBLE else View.GONE
+        binding.cardSleepArchitecture.visibility = if (tab == NavTab.DASHBOARD) View.VISIBLE else View.GONE
+        binding.cardSleepHistory.visibility = if (tab == NavTab.DASHBOARD) View.VISIBLE else View.GONE
+        listOf(binding.cardDailyActivity, binding.cardHealthCheckups, binding.cardWorkoutHistory).forEach {
+            it.visibility = if (settings) View.GONE else View.VISIBLE
+        }
+        binding.imgNavSettings.imageTintList = ColorStateList.valueOf(if (settings) mint else muted)
+        binding.tvNavSettings.setTextColor(if (settings) mint else muted)
+
         when (tab) {
+            NavTab.SETTINGS -> {
+                binding.layoutDashboardContainer.visibility = View.VISIBLE
+                binding.layoutTerminalContainer.visibility = View.GONE
+                binding.tvHeaderAppTitle.text = "Pengaturan"
+                listOf(binding.imgNavDash, binding.imgNavActivity, binding.imgNavTerminal).forEach {
+                    it.imageTintList = ColorStateList.valueOf(muted)
+                }
+                listOf(binding.tvNavDash, binding.tvNavActivity, binding.tvNavTerminal).forEach { it.setTextColor(muted) }
+                binding.layoutDashboardContainer.post { binding.layoutDashboardContainer.scrollTo(0, 0) }
+            }
             NavTab.DASHBOARD -> {
                 binding.layoutDashboardContainer.visibility = View.VISIBLE
                 binding.layoutTerminalContainer.visibility = View.GONE
@@ -347,7 +409,7 @@ class MainActivity : AppCompatActivity() {
                 binding.imgNavTerminal.imageTintList = ColorStateList.valueOf(muted)
                 binding.tvNavTerminal.setTextColor(muted)
 
-                binding.layoutDashboardContainer.smoothScrollTo(0, 0)
+                binding.layoutDashboardContainer.post { binding.layoutDashboardContainer.scrollTo(0, 0) }
             }
             NavTab.ACTIVITY -> {
                 binding.layoutDashboardContainer.visibility = View.VISIBLE
@@ -417,15 +479,19 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                // 4. Live BPM & Waveform
+                // Use persisted timestamps; cached live state must not create new chart points.
                 launch {
-                    viewModel.liveBpm.collect { bpm ->
-                        if (bpm != null && bpm > 0) {
-                            binding.tvLiveBpmValue.text = bpm.toString()
-                            binding.sparklineWaveView.updateBpm(bpm)
-                        } else {
-                            binding.tvLiveBpmValue.text = "--"
-                        }
+                    viewModel.latestHeartRate.collect { record ->
+                        binding.tvLiveBpmValue.text = record?.bpm?.toString() ?: "—"
+                        binding.tvHrLastUpdate.text = record?.let { "Terakhir · ${metricTime(it.timestamp)}" } ?: "Belum ada pengukuran"
+                    }
+                }
+                launch {
+                    viewModel.heartRateWindowHours.collect { hours ->
+                        binding.sparklineWaveView.setWindowHours(hours)
+                        binding.tvHrChartPeriod.text = "${if (hours == 24) "24 jam · rata-rata 5 menit" else "7 hari · rata-rata 30 menit"}\nSentuh grafik untuk nilai sampel asli"
+                        binding.btnHr24h.setTextColor(ContextCompat.getColor(this@MainActivity, if (hours == 24) R.color.primary_mint else R.color.on_surface_variant))
+                        binding.btnHr7d.setTextColor(ContextCompat.getColor(this@MainActivity, if (hours == 168) R.color.primary_mint else R.color.on_surface_variant))
                     }
                 }
 
@@ -439,9 +505,15 @@ class MainActivity : AppCompatActivity() {
                 launch {
                     viewModel.heartRate24hStats.collect { stats ->
                         if (stats.count > 0 && stats.avgBpm != null) {
-                            binding.tvHr24hStats.text = "Min: ${stats.minBpm} • Rata: ${stats.avgBpm} • Maks: ${stats.maxBpm} BPM"
+                            binding.tvHrMinValue.text = stats.minBpm?.toString() ?: "—"
+                            binding.tvHrAvgValue.text = stats.avgBpm?.toString() ?: "—"
+                            binding.tvHrMaxValue.text = stats.maxBpm?.toString() ?: "—"
+                            binding.tvHr24hStats.text = "${numberFormat.format(stats.count)} sampel dalam periode ini"
                         } else {
-                            binding.tvHr24hStats.text = "24 Jam Terakhir"
+                            binding.tvHrMinValue.text = "—"
+                            binding.tvHrAvgValue.text = "—"
+                            binding.tvHrMaxValue.text = "—"
+                            binding.tvHr24hStats.text = "Belum ada sampel dalam periode ini"
                         }
                     }
                 }
@@ -505,28 +577,26 @@ class MainActivity : AppCompatActivity() {
                         if (record != null) {
                             val steps = record.steps ?: 0
                             val cals = record.calories ?: 0
-                            binding.tvDailyStepsValue.text = numberFormat.format(steps)
-                            binding.tvDailyCaloriesValue.text = numberFormat.format(cals)
+                            binding.tvDailyStepsValue.text = record.steps?.let { numberFormat.format(it) } ?: "—"
+                            binding.tvDailyCaloriesValue.text = record.calories?.let { numberFormat.format(it) } ?: "—"
+                            binding.tvDailyActivityDate.text = java.text.SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(java.util.Date(record.timestamp))
+                            binding.tvRestingHrValue.text = record.restingHeartRate?.let { "$it BPM" } ?: "—"
+                            binding.tvStandHoursValue.text = record.standingHours?.let { "$it jam" } ?: "—"
+                            binding.tvHrRangeValue.text = "${record.averageHeartRate ?: "—"} / ${record.minHeartRate ?: "—"} / ${record.maxHeartRate ?: "—"}"
 
-                            val stepsPct = ((steps.toFloat() / 10000f) * 100f).coerceIn(0f, 100f)
-                            val calsPct = ((cals.toFloat() / 600f) * 100f).coerceIn(0f, 100f)
+                            val stepsPct = ((steps.toFloat() / 6000f) * 100f).coerceIn(0f, 100f)
+                            val calsPct = ((cals.toFloat() / 300f) * 100f).coerceIn(0f, 100f)
 
-                            binding.tvDailyStepsPercent.text = "${stepsPct.toInt()}% tercapai"
-                            binding.tvDailyCaloriesPercent.text = "${calsPct.toInt()}% tercapai"
+                            binding.tvDailyStepsPercent.text = if (record.steps != null) "${stepsPct.toInt()}% tercapai" else "Belum ada data"
+                            binding.tvDailyCaloriesPercent.text = if (record.calories != null) "${calsPct.toInt()}% tercapai" else "Belum ada data"
 
                             binding.gaugeDailySteps.progress = stepsPct
                             binding.gaugeDailyCalories.progress = calsPct
 
-                            record.restingHeartRate?.let {
-                                binding.tvRestingHrValue.text = "$it BPM"
-                            }
-                            record.standingHours?.let {
-                                binding.tvStandHoursValue.text = "$it / 12j"
-                            }
                         } else {
-                            // Default initial progress for preview
-                            binding.gaugeDailySteps.progress = 84.2f
-                            binding.gaugeDailyCalories.progress = 77.0f
+                            binding.gaugeDailySteps.progress = 0f
+                            binding.gaugeDailyCalories.progress = 0f
+                            binding.tvDailyActivityDate.text = "Belum ada data"
                         }
                     }
                 }
@@ -559,11 +629,18 @@ class MainActivity : AppCompatActivity() {
                 // 10. Card 5: Riwayat Olahraga
                 launch {
                     viewModel.workouts.collect { records ->
+                        binding.layoutWorkoutHistoryList.removeAllViews()
+                        binding.tvWorkoutSummary.text = if (records.isEmpty()) "Belum ada sesi tersimpan" else "${records.size} sesi tersimpan · terbaru lebih dulu"
                         if (records.isNotEmpty()) {
-                            binding.layoutWorkoutHistoryList.removeAllViews()
-                            records.take(5).forEach { record ->
+                            records.forEach { record ->
                                 addWorkoutRowView(record)
                             }
+                        } else {
+                            binding.layoutWorkoutHistoryList.addView(TextView(this@MainActivity).apply {
+                                text = "Belum ada sesi olahraga. Sinkronkan riwayat dari jam."
+                                textSize = 14f
+                                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.on_surface_variant))
+                            })
                         }
                     }
                 }
@@ -574,101 +651,166 @@ class MainActivity : AppCompatActivity() {
                         updateSleepSummaryUi(summary)
                     }
                 }
+                launch { viewModel.sleepHistory.collect { updateSleepHistoryUi(it) } }
             }
         }
     }
 
     private fun addWorkoutRowView(record: ActivityRecordEntity) {
+        val item = ItemWorkoutHistoryBinding.inflate(layoutInflater, binding.layoutWorkoutHistoryList, false)
+        item.workoutTitle.text = sportName(record.sportType)
+        item.workoutDate.text = java.text.SimpleDateFormat("EEEE, dd MMM yyyy", Locale("id", "ID"))
+            .format(java.util.Date(record.timestamp))
+        val clock = java.text.SimpleDateFormat("HH:mm", Locale.getDefault())
+        val start = clock.format(java.util.Date(record.timestamp))
+        val end = record.endTimestamp?.let { clock.format(java.util.Date(it)) }
+        item.workoutPeriod.text = if (end != null) "$start – $end · Selesai" else "Mulai $start"
+        item.workoutDuration.text = record.activeSeconds?.let { seconds ->
+            val hours = seconds / 3600
+            val minutes = seconds % 3600 / 60
+            if (hours > 0) String.format(Locale.getDefault(), "%d:%02d:%02d", hours, minutes, seconds % 60)
+            else String.format(Locale.getDefault(), "%d:%02d", minutes, seconds % 60)
+        } ?: "—"
+        item.workoutDurationLabel.text = if ((record.activeSeconds ?: 0) >= 3600) "Durasi · jam:mnt:dtk" else "Durasi · mnt:dtk"
+        item.workoutCalories.text = record.calories?.let { numberFormat.format(it) } ?: "—"
+        item.workoutHrMin.text = record.minHeartRate?.toString() ?: "—"
+        item.workoutHrAverage.text = record.averageHeartRate?.toString() ?: "—"
+        item.workoutHrMax.text = record.maxHeartRate?.toString() ?: "—"
+        item.workoutIcon.setImageResource(when (record.sportType) {
+            1 -> R.drawable.ic_directions_run
+            2, 15 -> R.drawable.ic_nordic_walking
+            6, 7 -> R.drawable.ic_pedal_bike
+            else -> R.drawable.ic_fitness_center
+        })
+        binding.layoutWorkoutHistoryList.addView(item.root)
+    }
+
+    private fun importSleepHistory() {
+        if (Build.VERSION.SDK_INT < 34 || sleepImportRunning) return
+        sleepImportRunning = true
+        binding.btnImportSleepHistory.isEnabled = false
+        binding.tvSleepImportStatus.visibility = View.VISIBLE
+        binding.tvSleepImportStatus.text = "Mengambil riwayat tidur Mi Fitness…"
+        lifecycleScope.launch {
+            try {
+                val count = HealthConnectSleepImporter(this@MainActivity).importHistory()
+                binding.tvSleepImportStatus.text = if (count > 0) "$count sesi Mi Fitness dibaca. Riwayat tersimpan di HP."
+                else "Belum ada tidur Mi Fitness di Health Connect. Sinkronkan tidur di Mi Fitness, lalu coba kembali."
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) {
+                binding.tvSleepImportStatus.text = "Riwayat belum dapat dibaca: ${e.message ?: "periksa izin Health Connect"}"
+            } finally {
+                sleepImportRunning = false
+                binding.btnImportSleepHistory.isEnabled = true
+            }
+        }
+    }
+
+    private fun formatSleepMinutes(minutes: Int): String =
+        if (minutes >= 60) "${minutes / 60}j ${minutes % 60}m" else "${minutes}m"
+
+    private fun bindSleepRow(item: ItemSleepHistoryBinding, session: SleepSessionEntity) {
+        item.sleepDate.text = java.text.SimpleDateFormat("EEE, dd MMM", Locale("id", "ID"))
+            .format(java.util.Date(session.endTimestamp))
+        val clock = java.text.SimpleDateFormat("HH:mm", Locale.getDefault())
+        item.sleepTime.text = "${clock.format(java.util.Date(session.startTimestamp))} – ${clock.format(java.util.Date(session.endTimestamp))}"
+        item.sleepDuration.text = formatSleepMinutes(session.totalMinutes)
+        item.sleepPhaseBar.setPhases(session.deepMinutes.takeIf { session.hasStageData },
+            session.lightMinutes.takeIf { session.hasStageData }, session.remMinutes.takeIf { session.hasStageData })
+        item.sleepPhaseCaption.text = if (session.hasStageData)
+            "Deep ${session.deepMinutes}m · Light ${session.lightMinutes}m · REM ${session.remMinutes}m"
+        else "Rincian fase belum tersedia"
+        item.root.setOnClickListener { showSleepDetails(session) }
+    }
+
+    private fun updateSleepHistoryUi(records: List<SleepSessionEntity>) {
+        sleepHistoryRecords = records
+        val zone = java.time.ZoneId.systemDefault()
+        val today = java.time.LocalDate.now(zone)
+        val week = records.filter {
+            java.time.Instant.ofEpochMilli(it.endTimestamp).atZone(zone).toLocalDate() in today.minusDays(6)..today
+        }
+        val average = week.takeIf { it.isNotEmpty() }?.map { it.totalMinutes }?.average()?.toInt()
+        binding.tvSleepHistorySummary.text = if (records.isEmpty()) "Belum ada sesi tidur tersimpan"
+        else average?.let { "7 hari · ${week.size} sesi · rata-rata ${formatSleepMinutes(it)}" } ?: "${records.size} sesi tersimpan"
+        binding.layoutSleepHistoryList.removeAllViews()
+        records.take(3).forEach { session ->
+            val item = ItemSleepHistoryBinding.inflate(layoutInflater, binding.layoutSleepHistoryList, false)
+            bindSleepRow(item, session)
+            binding.layoutSleepHistoryList.addView(item.root)
+        }
+        binding.btnViewSleepHistory.text = "Lihat semua (${records.size})"
+        binding.btnViewSleepHistory.isEnabled = records.isNotEmpty()
+    }
+
+    private class SleepHistoryHolder(val item: ItemSleepHistoryBinding) : RecyclerView.ViewHolder(item.root)
+
+    private fun showAllSleepHistory() {
+        val records = sleepHistoryRecords.toList()
+        if (records.isEmpty()) return
+        val content = DialogSleepHistoryBinding.inflate(layoutInflater)
+        val dialog = com.google.android.material.bottomsheet.BottomSheetDialog(this)
+        val pageSize = 7
+        var page = 0
+        val pages = (records.size + pageSize - 1) / pageSize
+        var visible = records.take(pageSize)
+        val adapter = object : RecyclerView.Adapter<SleepHistoryHolder>() {
+            override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) = SleepHistoryHolder(
+                ItemSleepHistoryBinding.inflate(layoutInflater, parent, false))
+            override fun getItemCount() = visible.size
+            override fun onBindViewHolder(holder: SleepHistoryHolder, position: Int) = bindSleepRow(holder.item, visible[position])
+        }
+        content.historyList.layoutManager = LinearLayoutManager(this)
+        content.historyList.adapter = adapter
+        fun renderPage() {
+            visible = records.drop(page * pageSize).take(pageSize)
+            adapter.notifyDataSetChanged()
+            content.historyList.scrollToPosition(0)
+            content.historyCount.text = "${records.size} sesi tersimpan · ketuk kartu untuk detail"
+            content.pageNumber.text = "${page + 1} / $pages"
+            content.previousPage.isEnabled = page > 0
+            content.nextPage.isEnabled = page < pages - 1
+        }
+        content.previousPage.setOnClickListener { if (page > 0) { page--; renderPage() } }
+        content.nextPage.setOnClickListener { if (page < pages - 1) { page++; renderPage() } }
+        dialog.setContentView(content.root)
+        dialog.setOnShowListener {
+            dialog.findViewById<FrameLayout>(com.google.android.material.R.id.design_bottom_sheet)?.let { sheet ->
+                sheet.layoutParams.height = (resources.displayMetrics.heightPixels * 0.82f).toInt()
+                com.google.android.material.bottomsheet.BottomSheetBehavior.from(sheet).state =
+                    com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED
+            }
+        }
+        renderPage()
+        dialog.show()
+    }
+
+    private fun showSleepDetails(session: SleepSessionEntity) {
         val density = resources.displayMetrics.density
-        val card = LinearLayout(this).apply {
+        val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundResource(R.drawable.bg_subcard)
-            val pad = (11 * density).toInt()
+            val pad = (20 * density).toInt()
             setPadding(pad, pad, pad, pad)
-            val lp = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = (8 * density).toInt()
-            }
-            layoutParams = lp
         }
-
-        val topRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+        fun text(value: String, size: Float = 14f) {
+            content.addView(TextView(this).apply {
+                this.text = value; textSize = size
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.on_surface))
+                setPadding(0, 0, 0, (12 * density).toInt())
+            })
         }
-
-        val iconContainer = FrameLayout(this).apply {
-            val size = (30 * density).toInt()
-            layoutParams = LinearLayout.LayoutParams(size, size)
-            setBackgroundResource(R.drawable.bg_chip)
+        text(formatSleepMinutes(session.totalMinutes), 30f)
+        text("${metricTime(session.startTimestamp)} – ${metricTime(session.endTimestamp)}")
+        val bar = com.rw3.directsync.ui.custom.SleepPhaseBarView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(-1, (28 * density).toInt())
+            setPhases(session.deepMinutes.takeIf { session.hasStageData }, session.lightMinutes.takeIf { session.hasStageData },
+                session.remMinutes.takeIf { session.hasStageData })
         }
-        val icon = ImageView(this).apply {
-            val size = (18 * density).toInt()
-            layoutParams = FrameLayout.LayoutParams(size, size, Gravity.CENTER)
-            val iconRes = when (record.sportType) {
-                1 -> R.drawable.ic_directions_run
-                2, 15 -> R.drawable.ic_nordic_walking
-                6, 7 -> R.drawable.ic_pedal_bike
-                else -> R.drawable.ic_fitness_center
-            }
-            setImageResource(iconRes)
-            imageTintList = ColorStateList.valueOf(ContextCompat.getColor(this@MainActivity, R.color.primary_mint))
-        }
-        iconContainer.addView(icon)
-        topRow.addView(iconContainer)
-
-        val titleCol = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                marginStart = (8 * density).toInt()
-            }
-            layoutParams = lp
-        }
-        val titleText = TextView(this).apply {
-            text = sportName(record.sportType)
-            textSize = 13f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.on_surface))
-        }
-        val timeText = TextView(this).apply {
-            val seconds = record.activeSeconds ?: 0
-            val durStr = if (seconds > 0) "${seconds / 60}m ${seconds % 60}s" else "—"
-            text = "${metricTime(record.timestamp)} • $durStr"
-            textSize = 11f
-            typeface = Typeface.MONOSPACE
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.on_surface_variant))
-        }
-        titleCol.addView(titleText)
-        titleCol.addView(timeText)
-        topRow.addView(titleCol)
-
-        val calsText = TextView(this).apply {
-            text = "${record.calories ?: "—"} kkal"
-            textSize = 13f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#F59E0B"))
-        }
-        topRow.addView(calsText)
-        card.addView(topRow)
-
-        val hrText = TextView(this).apply {
-            text = "HR Rata/Min/Maks: ${record.averageHeartRate ?: "—"} / ${record.minHeartRate ?: "—"} / ${record.maxHeartRate ?: "—"} BPM"
-            textSize = 11f
-            typeface = Typeface.MONOSPACE
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.on_surface_variant))
-            val lp = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = (6 * density).toInt()
-            }
-            layoutParams = lp
-        }
-        card.addView(hrText)
-
-        binding.layoutWorkoutHistoryList.addView(card)
+        content.addView(bar)
+        if (session.hasStageData) text("\nDeep ${formatSleepMinutes(session.deepMinutes)}\nLight ${formatSleepMinutes(session.lightMinutes)}\nREM ${formatSleepMinutes(session.remMinutes)}\nTerjaga ${formatSleepMinutes(session.awakeMinutes)}")
+        else text("\nRincian Deep, Light, dan REM belum dilaporkan untuk sesi ini.")
+        text(if (session.sourceFileId.startsWith("healthconnect:")) "Sumber: Mi Fitness" else "Sumber: smartwatch", 12f)
+        AlertDialog.Builder(this).setTitle("Detail tidur").setView(content).setPositiveButton("Tutup", null).show()
     }
 
     private fun metricTime(timestamp: Long): String =
@@ -690,58 +832,19 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("SetTextI18n")
     private fun updateSleepSummaryUi(summary: MainViewModel.SleepSummary) {
-        if (summary.hasData) {
-            val totalH = summary.totalMinutes / 60
-            val totalM = summary.totalMinutes % 60
-            binding.tvTotalSleepValue.text = "${totalH}h ${totalM}m"
-            binding.tvDeepSleepRatio.text = "${summary.deepRatioPercent}%"
-            binding.tvSleepScore.text = summary.sleepScore?.let { "$it/100" } ?: "--/100"
-            val dateFormat = java.text.SimpleDateFormat("dd MMM HH:mm", Locale.getDefault())
-            binding.tvSleepPeriod.text = "${dateFormat.format(java.util.Date(summary.startTimestamp))} - ${dateFormat.format(java.util.Date(summary.endTimestamp))}"
-            binding.tvTotalSleepValue.contentDescription = summary.averageHeartRate?.let {
-                "Total tidur ${totalH} jam ${totalM} menit, rata-rata detak jantung $it BPM"
-            } ?: binding.tvTotalSleepValue.text
-
-            val totalMin = summary.totalMinutes + summary.awakeMinutes
-            val safeTotal = if (totalMin > 0) totalMin.toFloat() else 1f
-
-            val wDeep = (summary.deepMinutes.toFloat() / safeTotal * 100f)
-            val wLight = (summary.lightMinutes.toFloat() / safeTotal * 100f)
-            val wRem = (summary.remMinutes.toFloat() / safeTotal * 100f)
-            val wAwake = (summary.awakeMinutes.toFloat() / safeTotal * 100f)
-
-            (binding.viewSleepBarDeep.layoutParams as? LinearLayout.LayoutParams)?.let {
-                it.weight = wDeep
-                binding.viewSleepBarDeep.layoutParams = it
-            }
-            (binding.viewSleepBarLight.layoutParams as? LinearLayout.LayoutParams)?.let {
-                it.weight = wLight
-                binding.viewSleepBarLight.layoutParams = it
-            }
-            (binding.viewSleepBarRem.layoutParams as? LinearLayout.LayoutParams)?.let {
-                it.weight = wRem
-                binding.viewSleepBarRem.layoutParams = it
-            }
-            (binding.viewSleepBarAwake.layoutParams as? LinearLayout.LayoutParams)?.let {
-                it.weight = wAwake
-                binding.viewSleepBarAwake.layoutParams = it
-            }
-
-            binding.tvLegendSleepDeep.text = "● Deep ${summary.deepMinutes / 60}h ${summary.deepMinutes % 60}m"
-            binding.tvLegendSleepLight.text = "● Light ${summary.lightMinutes / 60}h ${summary.lightMinutes % 60}m"
-            binding.tvLegendSleepRem.text = "● REM ${summary.remMinutes / 60}h ${summary.remMinutes % 60}m"
-            binding.tvLegendSleepAwake.text = "● Terjaga ${summary.awakeMinutes}m"
-        } else {
-            binding.tvSleepPeriod.text = "Belum ada data tidur terverifikasi"
-            binding.tvTotalSleepValue.text = "--h --m"
-            binding.tvDeepSleepRatio.text = "--%"
-            binding.tvSleepScore.text = "--/100"
-
-            binding.tvLegendSleepDeep.text = "● Deep --m"
-            binding.tvLegendSleepLight.text = "● Light --m"
-            binding.tvLegendSleepRem.text = "● REM --m"
-            binding.tvLegendSleepAwake.text = "● Terjaga --m"
-        }
+        binding.tvTotalSleepValue.text = if (summary.hasData) formatSleepMinutes(summary.totalMinutes) else "—"
+        binding.tvSleepPeriod.text = if (summary.hasData)
+            "${metricTime(summary.startTimestamp)} – ${metricTime(summary.endTimestamp)}" else "Belum ada sesi tidur tersimpan"
+        binding.tvSleepSource.text = if (summary.sourceFileId.startsWith("healthconnect:")) "Mi Fitness" else "Jam"
+        binding.sleepPhaseBar.setPhases(summary.deepMinutes.takeIf { summary.hasData && summary.hasStageData },
+            summary.lightMinutes.takeIf { summary.hasData && summary.hasStageData },
+            summary.remMinutes.takeIf { summary.hasData && summary.hasStageData })
+        binding.tvLegendSleepDeep.text = "● Deep\n${if (summary.hasStageData) formatSleepMinutes(summary.deepMinutes) else "—"}"
+        binding.tvLegendSleepLight.text = "● Light\n${if (summary.hasStageData) formatSleepMinutes(summary.lightMinutes) else "—"}"
+        binding.tvLegendSleepRem.text = "● REM\n${if (summary.hasStageData) formatSleepMinutes(summary.remMinutes) else "—"}"
+        binding.tvSleepPhaseStatus.text = if (summary.hasStageData) "Proporsi fase selama tidur"
+            else "Rincian Deep, Light, dan REM belum tersedia untuk sesi ini."
+        binding.tvTotalSleepValue.contentDescription = "Total tidur ${summary.totalMinutes / 60} jam ${summary.totalMinutes % 60} menit"
     }
 
     @SuppressLint("SetTextI18n")
@@ -750,10 +853,20 @@ class MainActivity : AppCompatActivity() {
         val cyanColor = ContextCompat.getColor(this, R.color.secondary_cyan)
         val coralColor = ContextCompat.getColor(this, R.color.heart_rate_coral)
         val mutedColor = ContextCompat.getColor(this, R.color.on_surface_variant)
+        val connected = state is BleSyncService.SyncState.Authenticated ||
+            state is BleSyncService.SyncState.StreamingHeartRate || state is BleSyncService.SyncState.SyncingSleep ||
+            state is BleSyncService.SyncState.SleepSyncCompleted || state is BleSyncService.SyncState.WebhookDispatched
+        binding.btnSyncAll.isEnabled = connected && state !is BleSyncService.SyncState.SyncingSleep
+        binding.btnSyncAll.alpha = if (binding.btnSyncAll.isEnabled) 1f else 0.5f
+        binding.btnSyncAll.text = if (state is BleSyncService.SyncState.SyncingSleep) "Mengambil riwayat…" else "Sinkronkan riwayat"
+        binding.btnToggleHeartRate.isEnabled = connected
+        binding.btnToggleHeartRate.alpha = if (connected) 1f else 0.5f
+        binding.btnDashboardConnect.text = if (connected) "Jam terhubung" else "Hubungkan jam"
+        binding.btnDashboardConnect.isEnabled = !connected
 
         when (state) {
             is BleSyncService.SyncState.Idle -> {
-                binding.tvHeaderGattStatus.text = " GATT: IDLE"
+                binding.tvHeaderGattStatus.text = " Belum terhubung"
                 binding.tvHeaderGattStatus.setTextColor(mutedColor)
                 binding.imgHeaderGattDot.setImageResource(R.drawable.dot_pulse_coral)
                 binding.tvDeviceStatusTag.text = "○ Idle"
@@ -761,7 +874,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             is BleSyncService.SyncState.Connecting -> {
-                binding.tvHeaderGattStatus.text = " GATT: CONNECTING"
+                binding.tvHeaderGattStatus.text = " Menghubungkan…"
                 binding.tvHeaderGattStatus.setTextColor(cyanColor)
                 binding.imgHeaderGattDot.setImageResource(R.drawable.dot_pulse_green)
                 binding.tvDeviceStatusTag.text = "⏳ Connecting..."
@@ -769,21 +882,21 @@ class MainActivity : AppCompatActivity() {
             }
 
             is BleSyncService.SyncState.DiscoveringServices -> {
-                binding.tvHeaderGattStatus.text = " GATT: DISCOVERING"
+                binding.tvHeaderGattStatus.text = " Menyiapkan koneksi…"
                 binding.tvHeaderGattStatus.setTextColor(cyanColor)
                 binding.tvDeviceStatusTag.text = "⚡ Discovering"
                 binding.tvDeviceStatusTag.setTextColor(cyanColor)
             }
 
             is BleSyncService.SyncState.Authenticating -> {
-                binding.tvHeaderGattStatus.text = " AUTH: PROG"
+                binding.tvHeaderGattStatus.text = " Memverifikasi jam…"
                 binding.tvHeaderGattStatus.setTextColor(cyanColor)
                 binding.tvDeviceStatusTag.text = "🔑 Authenticating"
                 binding.tvDeviceStatusTag.setTextColor(cyanColor)
             }
 
             is BleSyncService.SyncState.Authenticated -> {
-                binding.tvHeaderGattStatus.text = " GATT: CONNECTED"
+                binding.tvHeaderGattStatus.text = " Terhubung"
                 binding.tvHeaderGattStatus.setTextColor(mintColor)
                 binding.imgHeaderGattDot.setImageResource(R.drawable.dot_pulse_green)
                 binding.tvDeviceStatusTag.text = " Tersambung"
@@ -797,19 +910,17 @@ class MainActivity : AppCompatActivity() {
                 binding.imgHeaderGattDot.setImageResource(R.drawable.dot_pulse_green)
                 binding.tvDeviceStatusTag.text = " Tersambung"
                 binding.tvDeviceStatusTag.setTextColor(mintColor)
-                binding.tvLiveBpmValue.text = state.latestBpm.toString()
-                binding.sparklineWaveView.updateBpm(state.latestBpm)
             }
 
             is BleSyncService.SyncState.SyncingSleep -> {
-                binding.tvHeaderGattStatus.text = " ACTIVITY SYNC"
+                binding.tvHeaderGattStatus.text = " Mengambil riwayat…"
                 binding.tvHeaderGattStatus.setTextColor(cyanColor)
                 binding.tvDeviceStatusTag.text = "🌙 Syncing (${state.bytesBuffered} B)"
                 binding.tvDeviceStatusTag.setTextColor(cyanColor)
             }
 
             is BleSyncService.SyncState.SleepSyncCompleted -> {
-                binding.tvHeaderGattStatus.text = " GATT: CONNECTED"
+                binding.tvHeaderGattStatus.text = " Terhubung"
                 binding.tvDeviceStatusTag.text = "✓ Sleep Saved (${state.stagesSaved})"
                 binding.tvDeviceStatusTag.setTextColor(mintColor)
                 Toast.makeText(this, "Berhasil menyimpan ${state.stagesSaved} stage tidur ke SQLite!", Toast.LENGTH_SHORT).show()
@@ -823,7 +934,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             is BleSyncService.SyncState.Disconnected -> {
-                binding.tvHeaderGattStatus.text = " GATT: DISCONNECTED"
+                binding.tvHeaderGattStatus.text = " Terputus"
                 binding.tvHeaderGattStatus.setTextColor(coralColor)
                 binding.imgHeaderGattDot.setImageResource(R.drawable.dot_pulse_coral)
                 binding.tvDeviceStatusTag.text = "✕ Terputus"
@@ -832,7 +943,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             is BleSyncService.SyncState.Error -> {
-                binding.tvHeaderGattStatus.text = " GATT: ERROR"
+                binding.tvHeaderGattStatus.text = " Koneksi bermasalah"
                 binding.tvHeaderGattStatus.setTextColor(coralColor)
                 binding.imgHeaderGattDot.setImageResource(R.drawable.dot_pulse_coral)
                 binding.tvDeviceStatusTag.text = "⚠ Error"
@@ -994,6 +1105,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun triggerSyncAll() {
+        if (Build.VERSION.SDK_INT >= 34 && ContextCompat.checkSelfPermission(this,
+                HealthConnectSleepImporter.READ_SLEEP) == PackageManager.PERMISSION_GRANTED) importSleepHistory()
         triggerSleepSync()
         bleService?.let { service ->
             service.queryBatteryStatus()

@@ -54,6 +54,18 @@ class XiaomiWearProtocolEngine(authKeyHex: String) {
         const val CMD_SUBTYPE_MUSIC_INFO = 1
         const val CMD_SUBTYPE_MEDIA_KEY = 2
 
+        // Watchface (from xiaomi.proto Command -> watchface = 6)
+        const val CMD_TYPE_WATCHFACE = 4
+        const val CMD_SUBTYPE_WATCHFACE_LIST = 0
+        const val CMD_SUBTYPE_WATCHFACE_SET = 1
+        const val CMD_SUBTYPE_WATCHFACE_DELETE = 2
+        const val CMD_SUBTYPE_WATCHFACE_INSTALL = 4
+
+        // Data Upload (from xiaomi.proto Command -> dataUpload = 24)
+        const val CMD_TYPE_DATA_UPLOAD = 22
+        const val CMD_SUBTYPE_DATA_UPLOAD_REQUEST = 0
+        const val DATA_UPLOAD_TYPE_WATCHFACE = 16
+
         // SPP V1 Framing Constants
         val SPP_V1_PREAMBLE = byteArrayOf(0xBA.toByte(), 0xDC.toByte(), 0xFE.toByte())
         const val SPP_V1_EPILOGUE: Byte = 0xEF.toByte()
@@ -333,6 +345,106 @@ class XiaomiWearProtocolEngine(authKeyHex: String) {
         )
     }
 
+    /**
+     * Builds Watchface List Query Command: `Command(type = 4, subtype = 0)`
+     */
+    fun buildWatchfaceListQueryCommand(): ByteArray {
+        return buildCommandProto(CMD_TYPE_WATCHFACE, CMD_SUBTYPE_WATCHFACE_LIST)
+    }
+
+    /**
+     * Builds Watchface Select/Set Command: `Command(type = 4, subtype = 1, watchface = { watchfaceId = id })`
+     */
+    fun buildWatchfaceSetCommand(watchfaceId: String): ByteArray {
+        val wfStream = ByteArrayOutputStream().apply {
+            writeStringField(2, watchfaceId)
+        }
+        return buildCommandProto(
+            type = CMD_TYPE_WATCHFACE,
+            subtype = CMD_SUBTYPE_WATCHFACE_SET,
+            nestedFieldNumber = 6,
+            nestedBytes = wfStream.toByteArray()
+        )
+    }
+
+    /**
+     * Builds Watchface Delete Command: `Command(type = 4, subtype = 2, watchface = { watchfaceId = id })`
+     */
+    fun buildWatchfaceDeleteCommand(watchfaceId: String): ByteArray {
+        val wfStream = ByteArrayOutputStream().apply {
+            writeStringField(2, watchfaceId)
+        }
+        return buildCommandProto(
+            type = CMD_TYPE_WATCHFACE,
+            subtype = CMD_SUBTYPE_WATCHFACE_DELETE,
+            nestedFieldNumber = 6,
+            nestedBytes = wfStream.toByteArray()
+        )
+    }
+
+    /**
+     * Builds Watchface Install Start Command:
+     * `Command(type = 4, subtype = 4, watchface = { watchfaceInstallStart = { id = id, size = size } })`
+     */
+    fun buildWatchfaceInstallStartCommand(watchfaceId: String, sizeBytes: Int): ByteArray {
+        val startStream = ByteArrayOutputStream().apply {
+            writeStringField(1, watchfaceId)
+            writeUint32Field(2, sizeBytes)
+        }
+        val wfStream = ByteArrayOutputStream().apply {
+            writeBytesField(6, startStream.toByteArray())
+        }
+        return buildCommandProto(
+            type = CMD_TYPE_WATCHFACE,
+            subtype = CMD_SUBTYPE_WATCHFACE_INSTALL,
+            nestedFieldNumber = 6,
+            nestedBytes = wfStream.toByteArray()
+        )
+    }
+
+    /**
+     * Builds Watchface Install Finish Command:
+     * `Command(type = 4, subtype = 4, watchface = { watchfaceInstallFinish = { id = id, unknown2 = 2 } })`
+     */
+    fun buildWatchfaceInstallFinishCommand(watchfaceId: String): ByteArray {
+        val finishStream = ByteArrayOutputStream().apply {
+            writeStringField(1, watchfaceId)
+            writeUint32Field(2, 2)
+            writeUint32Field(3, 0)
+            writeUint32Field(4, 0)
+        }
+        val wfStream = ByteArrayOutputStream().apply {
+            writeBytesField(7, finishStream.toByteArray())
+        }
+        return buildCommandProto(
+            type = CMD_TYPE_WATCHFACE,
+            subtype = CMD_SUBTYPE_WATCHFACE_INSTALL,
+            nestedFieldNumber = 6,
+            nestedBytes = wfStream.toByteArray()
+        )
+    }
+
+    /**
+     * Builds Data Upload Request Command:
+     * `Command(type = 22, subtype = 0, dataUpload = { dataUploadRequest = { type = 16, md5sum = md5, size = size } })`
+     */
+    fun buildDataUploadRequestCommand(md5Bytes: ByteArray, sizeBytes: Int, uploadType: Int = DATA_UPLOAD_TYPE_WATCHFACE): ByteArray {
+        val reqStream = ByteArrayOutputStream().apply {
+            writeUint32Field(1, uploadType)
+            writeBytesField(2, md5Bytes)
+            writeUint32Field(3, sizeBytes)
+        }
+        val dataUploadStream = ByteArrayOutputStream().apply {
+            writeBytesField(1, reqStream.toByteArray())
+        }
+        return buildCommandProto(
+            type = CMD_TYPE_DATA_UPLOAD,
+            subtype = CMD_SUBTYPE_DATA_UPLOAD_REQUEST,
+            nestedFieldNumber = 24,
+            nestedBytes = dataUploadStream.toByteArray()
+        )
+    }
+
     // =========================================================================
     // 2. Protobuf Wire Parser (Extracts Auth Nonce, Realtime HR, Activity File IDs)
     // =========================================================================
@@ -394,7 +506,7 @@ class XiaomiWearProtocolEngine(authKeyHex: String) {
     sealed class DecodedWatchEvent {
         data class WatchNonceReceived(val step3ResponseCommand: ByteArray) : DecodedWatchEvent()
         data object AuthSucceeded : DecodedWatchEvent()
-        data class RealtimeHeartRate(val bpm: Int, val steps: Int, val calories: Int) : DecodedWatchEvent()
+        data class RealtimeHeartRate(val bpm: Int, val steps: Int?, val calories: Int?) : DecodedWatchEvent()
         data class ActivityFileIdsReceived(val subtype: Int, val fileIds: List<ByteArray>) : DecodedWatchEvent()
         data class BatteryReport(val levelPercent: Int) : DecodedWatchEvent()
         data class NotificationDismissed(val id: Int) : DecodedWatchEvent()
@@ -402,8 +514,20 @@ class XiaomiWearProtocolEngine(authKeyHex: String) {
         data object CallIgnoreReceived : DecodedWatchEvent()
         data object MusicInfoRequested : DecodedWatchEvent()
         data class MediaKeyReceived(val key: Int, val volume: Int) : DecodedWatchEvent()
+        data class WatchfaceListReceived(val watchfaces: List<WatchfaceItem>) : DecodedWatchEvent()
+        data class WatchfaceActiveChanged(val id: String, val success: Boolean) : DecodedWatchEvent()
+        data class WatchfaceDeleted(val id: String, val success: Boolean) : DecodedWatchEvent()
+        data class WatchfaceInstallStatusReceived(val id: String, val status: Int) : DecodedWatchEvent()
+        data class DataUploadAckReceived(val md5sum: ByteArray, val resumePosition: Int, val chunkSize: Int) : DecodedWatchEvent()
         data class RawCommand(val type: Int, val subtype: Int) : DecodedWatchEvent()
     }
+
+    data class WatchfaceItem(
+        val id: String,
+        val name: String,
+        val isActive: Boolean,
+        val canDelete: Boolean
+    )
 
     fun decodeIncomingCommandProto(commandBytes: ByteArray): DecodedWatchEvent? {
         val topFields = parseProtoFields(commandBytes)
@@ -474,8 +598,8 @@ class XiaomiWearProtocolEngine(authKeyHex: String) {
                     CMD_SUBTYPE_REALTIME_STATS_EVENT -> {
                         val rtBytes = hFields.firstOrNull { it.fieldNumber == 39 && it.wireType == 2 }?.bytesVal ?: return null
                         val rtFields = parseProtoFields(rtBytes)
-                        val steps = rtFields.firstOrNull { it.fieldNumber == 1 }?.intVal?.toInt() ?: 0
-                        val calories = rtFields.firstOrNull { it.fieldNumber == 2 }?.intVal?.toInt() ?: 0
+                        val steps = rtFields.firstOrNull { it.fieldNumber == 1 && it.wireType == 0 }?.intVal?.toInt()
+                        val calories = rtFields.firstOrNull { it.fieldNumber == 2 && it.wireType == 0 }?.intVal?.toInt()
                         val hr = rtFields.firstOrNull { it.fieldNumber == 4 }?.intVal?.toInt() ?: 0
                         return DecodedWatchEvent.RealtimeHeartRate(bpm = hr, steps = steps, calories = calories)
                     }
@@ -483,8 +607,8 @@ class XiaomiWearProtocolEngine(authKeyHex: String) {
                         val wsBytes = hFields.firstOrNull { it.fieldNumber == 42 && it.wireType == 2 }?.bytesVal ?: return null
                         val wsFields = parseProtoFields(wsBytes)
                         val hr = wsFields.firstOrNull { it.fieldNumber == 1 }?.intVal?.toInt() ?: 0
-                        val calories = wsFields.firstOrNull { it.fieldNumber == 2 }?.intVal?.toInt() ?: 0
-                        val steps = wsFields.firstOrNull { it.fieldNumber == 3 }?.intVal?.toInt() ?: 0
+                        val calories = wsFields.firstOrNull { it.fieldNumber == 2 && it.wireType == 0 }?.intVal?.toInt()
+                        val steps = wsFields.firstOrNull { it.fieldNumber == 3 && it.wireType == 0 }?.intVal?.toInt()
                         return DecodedWatchEvent.RealtimeHeartRate(bpm = hr, steps = steps, calories = calories)
                     }
                     CMD_SUBTYPE_ACTIVITY_FETCH_TODAY, CMD_SUBTYPE_ACTIVITY_FETCH_PAST -> {
@@ -551,6 +675,71 @@ class XiaomiWearProtocolEngine(authKeyHex: String) {
                     }
                     else -> return DecodedWatchEvent.MusicInfoRequested
                 }
+            }
+
+            CMD_TYPE_WATCHFACE -> {
+                val wfBytes = topFields.firstOrNull { it.fieldNumber == 6 && it.wireType == 2 }?.bytesVal
+                if (wfBytes != null) {
+                    val wFields = parseProtoFields(wfBytes)
+                    when (subtype) {
+                        CMD_SUBTYPE_WATCHFACE_LIST -> {
+                            val listBytes = wFields.firstOrNull { it.fieldNumber == 1 && it.wireType == 2 }?.bytesVal
+                            if (listBytes != null) {
+                                val lFields = parseProtoFields(listBytes)
+                                val items = mutableListOf<WatchfaceItem>()
+                                for (wfField in lFields) {
+                                    if (wfField.fieldNumber == 1 && wfField.wireType == 2) {
+                                        val infoFields = parseProtoFields(wfField.bytesVal)
+                                        val id = infoFields.firstOrNull { it.fieldNumber == 1 }?.bytesVal?.toString(Charsets.UTF_8) ?: ""
+                                        val name = infoFields.firstOrNull { it.fieldNumber == 2 }?.bytesVal?.toString(Charsets.UTF_8) ?: ""
+                                        val active = infoFields.firstOrNull { it.fieldNumber == 3 }?.intVal == 1L
+                                        val canDelete = infoFields.firstOrNull { it.fieldNumber == 4 }?.intVal == 1L
+                                        if (id.isNotEmpty()) {
+                                            items.add(WatchfaceItem(id, name, active, canDelete))
+                                        }
+                                    }
+                                }
+                                return DecodedWatchEvent.WatchfaceListReceived(items)
+                            }
+                        }
+                        CMD_SUBTYPE_WATCHFACE_SET -> {
+                            val wfId = wFields.firstOrNull { it.fieldNumber == 2 }?.bytesVal?.toString(Charsets.UTF_8) ?: ""
+                            val ack = wFields.firstOrNull { it.fieldNumber == 4 }?.intVal?.toInt() ?: 1
+                            return DecodedWatchEvent.WatchfaceActiveChanged(wfId, ack == 1)
+                        }
+                        CMD_SUBTYPE_WATCHFACE_DELETE -> {
+                            val wfId = wFields.firstOrNull { it.fieldNumber == 2 }?.bytesVal?.toString(Charsets.UTF_8) ?: ""
+                            val ack = wFields.firstOrNull { it.fieldNumber == 4 }?.intVal?.toInt() ?: 1
+                            return DecodedWatchEvent.WatchfaceDeleted(wfId, ack == 1)
+                        }
+                        CMD_SUBTYPE_WATCHFACE_INSTALL -> {
+                            val status = wFields.firstOrNull { it.fieldNumber == 5 }?.intVal?.toInt() ?: 0
+                            val wfId = wFields.firstOrNull { it.fieldNumber == 2 }?.bytesVal?.toString(Charsets.UTF_8)
+                                ?: wFields.firstOrNull { it.fieldNumber == 6 }?.let { parseProtoFields(it.bytesVal).firstOrNull { f -> f.fieldNumber == 1 }?.bytesVal?.toString(Charsets.UTF_8) }
+                                ?: ""
+                            return DecodedWatchEvent.WatchfaceInstallStatusReceived(wfId, status)
+                        }
+                    }
+                } else if (subtype == CMD_SUBTYPE_WATCHFACE_INSTALL) {
+                    return DecodedWatchEvent.WatchfaceInstallStatusReceived("", 0)
+                }
+                return DecodedWatchEvent.RawCommand(type, subtype)
+            }
+
+            CMD_TYPE_DATA_UPLOAD -> {
+                val uploadBytes = topFields.firstOrNull { it.fieldNumber == 24 && it.wireType == 2 }?.bytesVal
+                if (uploadBytes != null) {
+                    val uFields = parseProtoFields(uploadBytes)
+                    val ackBytes = uFields.firstOrNull { it.fieldNumber == 2 && it.wireType == 2 }?.bytesVal
+                    if (ackBytes != null) {
+                        val aFields = parseProtoFields(ackBytes)
+                        val md5 = aFields.firstOrNull { it.fieldNumber == 1 }?.bytesVal ?: ByteArray(0)
+                        val resumePos = aFields.firstOrNull { it.fieldNumber == 4 }?.intVal?.toInt() ?: 0
+                        val chunkSize = aFields.firstOrNull { it.fieldNumber == 5 }?.intVal?.toInt() ?: 4096
+                        return DecodedWatchEvent.DataUploadAckReceived(md5, resumePos, chunkSize)
+                    }
+                }
+                return DecodedWatchEvent.RawCommand(type, subtype)
             }
         }
 
@@ -811,6 +1000,37 @@ class XiaomiWearProtocolEngine(authKeyHex: String) {
     }
 
     /**
+     * Encodes a Mass Data chunk for SPP V1 Channel 5 (`CHANNEL_MASS = 5`).
+     * Per XiaomiSppPacketV1 specification, `Channel.Data` uses AES-CCM with `counter = 0`
+     * and does NOT prepend the 2-byte packetCounter used on `Channel.ProtobufCommand`.
+     */
+    fun encodeSppV1MassDataChunk(payloadChunk: ByteArray, channel: Int = 5): ByteArray {
+        val serial = frameCounterV1++ and 0xFF
+        val dataType: Int
+        val payloadToFrame: ByteArray
+
+        if (isEncryptionInitialized) {
+            dataType = 1 // DATA_TYPE_ENCRYPTED
+            payloadToFrame = encryptAesCcm(payloadChunk, counter = 0)
+        } else {
+            dataType = 0 // DATA_TYPE_PLAIN
+            payloadToFrame = payloadChunk
+        }
+
+        return ByteBuffer.allocate(11 + payloadToFrame.size).order(ByteOrder.LITTLE_ENDIAN).apply {
+            put(SPP_V1_PREAMBLE)
+            put((channel and 0x0F).toByte()) // CHANNEL_MASS = 5
+            put(0x80.toByte()) // flag = true, needsResponse = false
+            putShort((payloadToFrame.size + 3).toShort())
+            put(0x02.toByte()) // OPCODE_SEND = 2
+            put(serial.toByte())
+            put(dataType.toByte())
+            put(payloadToFrame)
+            put(SPP_V1_EPILOGUE)
+        }.array()
+    }
+
+    /**
      * SPP V2 Session Config Request (`A5 A5 02 00 ...`).
      */
     fun buildSppV2SessionConfigRequest(): ByteArray {
@@ -834,6 +1054,21 @@ class XiaomiWearProtocolEngine(authKeyHex: String) {
         val body = if (opCode == 2) encryptV2Ctr(commandProto) else commandProto
         val dataPayload = ByteBuffer.allocate(2 + body.size).apply {
             put(0x01.toByte()) // CHANNEL_PROTOBUF = 1
+            put(opCode.toByte())
+            put(body)
+        }.array()
+        return encodeSppV2Frame(SPP_V2_TYPE_DATA, seq, dataPayload)
+    }
+
+    /**
+     * Encodes a raw binary data chunk for file/watchface upload over SPP V2 Channel 2 (`CHANNEL_DATA`).
+     */
+    fun encodeSppV2DataChunk(payloadChunk: ByteArray, channel: Int = 2): ByteArray {
+        val seq = sequenceCounterV2++ and 0xFF
+        val opCode = if (!isEncryptionInitialized) 1 else 2 // 1=Plaintext, 2=Encrypted (AES-CTR)
+        val body = if (opCode == 2) encryptV2Ctr(payloadChunk) else payloadChunk
+        val dataPayload = ByteBuffer.allocate(2 + body.size).apply {
+            put(channel.toByte()) // CHANNEL_DATA = 2
             put(opCode.toByte())
             put(body)
         }.array()

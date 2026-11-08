@@ -44,6 +44,7 @@
     <!-- For minimal wake-lock during sleep-log packet bursts & webhook sync -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.health.READ_SLEEP" />
     <!-- Required on Android 11+ (API 30+) to query installed apps for the notification whitelist filter -->
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"
@@ -53,7 +54,7 @@
         android:allowBackup="false"
         android:label="RW3-DirectSync"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Material3.DayNight.NoActionBar">
+        android:theme="@style/Theme.Rw3">
 
         <activity
             android:name=".ui.MainActivity"
@@ -65,7 +66,25 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".ui.WatchfaceActivity"
+            android:exported="true"
+            android:label="Koleksi &amp; Wallpaper Jam" />
+
         <!-- Dedicated BLE Foreground Service keeping Redmi Watch 3 connection alive -->
+        <activity android:name=".ui.HealthDataPrivacyActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+            </intent-filter>
+        </activity>
+        <activity-alias android:name=".ui.HealthPermissionsUsageActivity"
+            android:exported="true" android:targetActivity=".ui.HealthDataPrivacyActivity"
+            android:permission="android.permission.START_VIEW_PERMISSION_USAGE">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+            </intent-filter>
+        </activity-alias>
         <service
             android:name=".ble.BleSyncService"
             android:enabled="true"

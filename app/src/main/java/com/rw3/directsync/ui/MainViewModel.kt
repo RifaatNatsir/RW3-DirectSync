@@ -15,11 +15,21 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import com.rw3.directsync.data.SleepHistoryCache
+import com.rw3.directsync.data.ActivityHistoryCache
+import com.rw3.directsync.data.DailyActivityReducer
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.Dispatchers
 
 /**
  * MVVM ViewModel managing credentials, Webhook URL, Room database metrics observation,
  * discovered BLE devices, and live diagnostic logs.
  */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
@@ -34,6 +44,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val prefs = application.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val db = Rw3Database.getDatabase(application)
+
+    init { viewModelScope.launch { SleepHistoryCache.recover(application) } }
+    init { viewModelScope.launch { ActivityHistoryCache.recover(application) } }
 
     private val _macAddress = MutableStateFlow(
         prefs.getString(KEY_MAC_ADDRESS, DEFAULT_MAC_ADDRESS) ?: DEFAULT_MAC_ADDRESS
@@ -68,7 +81,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _diagnosticLogs = MutableStateFlow<List<String>>(emptyList())
     val diagnosticLogs: StateFlow<List<String>> = _diagnosticLogs.asStateFlow()
 
-    val dailyActivity = db.activityRecordDao().observeDaily()
+    val dailyActivity = combine(db.activityRecordDao().observeDailySnapshots(), db.dailyActivityMinuteDao().observeRecent()) {
+            snapshots, minutes -> DailyActivityReducer.merge(snapshots, minutes)
+        }.flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.Lazily, null)
     val workouts = db.activityRecordDao().observeWorkouts()
         .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
@@ -90,12 +105,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val count: Int = 0
     )
 
-    val heartRate24hRecords: StateFlow<List<com.rw3.directsync.data.db.entity.HeartRateEntity>> = db.heartRateDao()
-        .observeLatestRecords(1500)
-        .map { list ->
-            val cutoff = System.currentTimeMillis() - 24 * 3600 * 1000L
-            list.filter { it.timestamp >= cutoff }.reversed()
-        }
+    val heartRateWindowHours = MutableStateFlow(24)
+    private val clock = flow {
+        while (true) { emit(System.currentTimeMillis()); delay(60_000) }
+    }
+    val latestHeartRate = db.heartRateDao().observeRecentRecords(1)
+        .map { it.firstOrNull() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    val heartRate24hRecords: StateFlow<List<com.rw3.directsync.data.db.entity.HeartRateEntity>> =
+        combine(heartRateWindowHours, clock) { hours, now -> now - hours * 3_600_000L }
+        .flatMapLatest { cutoff -> db.heartRateDao().observeRecordsSince(cutoff) }
+        .map { list -> list.filter { it.timestamp <= System.currentTimeMillis() }.distinctBy { it.timestamp } }
         .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     val heartRate24hStats: StateFlow<HeartRate24hStats> = heartRate24hRecords
@@ -147,8 +168,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val hasData: Boolean = false,
         val startTimestamp: Long = 0,
         val endTimestamp: Long = 0,
-        val averageHeartRate: Int? = null
+        val averageHeartRate: Int? = null,
+        val hasStageData: Boolean = false,
+        val sourceFileId: String = ""
     )
+
+    val sleepHistory = db.sleepStageDao().observeSessions()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val sleepSummary: StateFlow<SleepSummary> = db.sleepStageDao()
         .observeLatestSession()
@@ -164,7 +190,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 hasData = true,
                 startTimestamp = session.startTimestamp,
                 endTimestamp = session.endTimestamp,
-                averageHeartRate = session.averageHeartRate
+                averageHeartRate = session.averageHeartRate,
+                hasStageData = session.hasStageData,
+                sourceFileId = session.sourceFileId
             )
         }
         .stateIn(viewModelScope, SharingStarted.Lazily, SleepSummary())
