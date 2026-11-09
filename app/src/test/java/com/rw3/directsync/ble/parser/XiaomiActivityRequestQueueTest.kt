@@ -33,4 +33,15 @@ class XiaomiActivityRequestQueueTest {
         q.offer(id(1)); q.next(); q.reset()
         assertNull(q.active); assertTrue(q.offer(id(1))); assertArrayEquals(id(1), q.next())
     }
+
+    @Test fun partialSleepPushIsRetriedBeforePendingWorkoutsWithoutSkippingActiveRequest() {
+        val q = XiaomiActivityRequestQueue()
+        q.offer(id(1)); q.offer(id(2)); q.next()
+        q.offer(id(3), priority = true)
+        assertArrayEquals(id(1), q.active)
+        q.complete(id(1))
+        assertArrayEquals(id(3), q.next())
+        q.complete(id(3))
+        assertArrayEquals(id(2), q.next())
+    }
 }

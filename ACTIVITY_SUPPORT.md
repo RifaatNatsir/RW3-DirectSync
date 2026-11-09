@@ -1,5 +1,26 @@
 # Aktivitas dan olahraga
 
+## Pemeriksaan tidur terakhir, 9 November 2026
+
+Sesi yang dicari pengguna adalah 9 November, 01:56–05:45 (rentang 229 menit). Pada awal pemeriksaan ADB, database masih berisi 24 sesi dan sesi terakhir 8 November 00:11–08:30. Setelah perbaikan aplikasi dan restart biasa smartwatch oleh pengguna, sesi tersebut berhasil diterima dari file jam `B0B7F06A200420`, 7.660 byte dengan CRC valid. Database kini berisi **25 sesi**, dan UI menampilkan **3j 49m**, **09 Nov 01:56 – 09 Nov 05:45**. Waktu/durasi berasal dari file terverifikasi, bukan input manual pengguna.
+
+Perbaikan transport/antrean:
+
+- Pembaca RFCOMM mempertahankan preamble SPP V1/V2 yang terpotong antarpembacaan, termasuk sisa satu byte `BA`/`A5` dan dua byte `BA DC`. Regresi menguji semua posisi pemotongan serta frame gabungan/byte per byte.
+- Urutan daftar hari ini → riwayat → mode harian alternatif diserialkan. Permintaan file menunggu aliran jam tenang tiga detik; mode alternatif tidak menyebabkan pengulangan daftar riwayat. Timeout respons daftar dibatasi 15 detik.
+- Awal file baru bisa memulihkan assembler setelah file terdahulu terputus. ID asli file dorongan parsial dicatat dan diprioritaskan untuk unduhan ulang, tanpa mengonsumsi permintaan olahraga lain.
+- Selesainya penyimpanan file sebelumnya tidak membatalkan timeout file berikutnya yang sudah mulai diterima. Callback penyimpanan dari koneksi lama tidak mengubah antrean/status koneksi baru.
+- Setelah reconnect, throttle permintaan direset dan auto-sync menunggu transfer awal/unggah yang sedang berlangsung. Burst HR dijeda selama pengambilan riwayat untuk menghindari perintah sensor di tengah unduhan.
+- Riwayat diperiksa lagi saat membuka aplikasi bila permintaan terakhir lebih dari lima menit, serta pada siklus monitor 30 menit selama tersambung.
+
+Pengujian langsung menunjukkan timer pemulihan kini aktif dan file `944DEF6A200420` dijadwalkan ulang setelah transfer berhenti di chunk 1/4. Sebelum restart, kiriman jam berulang kali berhenti pada file 8 November tersebut sebelum file 9 November diterima. Setelah restart biasa, jam mengirim ketiga file 7–9 November sampai tuntas. Ini mendukung dugaan antrean kirim jam sempat tersendat; tidak membuktikan file 8 November rusak. Mi Fitness diuji dengan koneksi DirectSync dilepas: sebelum restart, sinkronisasi vendor melaporkan selesai tetapi log pembacaan laporannya tetap menunjukkan nol sesi 9 November. Koneksi kedua aplikasi sempat saling menutup; jalur DirectSync diuji terpisah. Validasi build terkini: **116 tes lulus, 0 gagal, 0 skip**, APK terbaru terpasang, tanpa crash AndroidRuntime.
+
+File tidur 9 November membawa penanda mulai/bangun yang lengkap dan HR rata-rata 67 BPM, tetapi tidak menyertakan ringkasan/klasifikasi Deep, Light, dan REM. Pembacaan langsung tersebut disimpan sebagai `hasStageData=false`. Setelah restart, **Mi Fitness juga berhasil menampilkan sesi 9 November selama 3 jam 49 menit**. Jalur Health Connect yang sudah tersedia kemudian membaca 25 sesi Mi Fitness dan melengkapi fase 7–9 November tanpa duplikasi. Sesi 9 November kini memiliki **60 menit Deep, 169 menit Light, dan tidak ada interval REM dalam laporan yang diterima** (`hasStageData=true`, sumber Mi Fitness). Bar fase menggunakan laporan tersebut, bukan klasifikasi buatan dari sensor mentah.
+
+Snapshot ADB dan screenshot UI sesudah pemulihan ada di `app/build/qa/sleep-latest-fix/verification.json`, `sleep-final-device.png`, dan `mifitness-after-restart-device.png`. Saat memeriksa Mi Fitness, DirectSync diputuskan dahulu. Setelah impor selesai, koneksi dikembalikan ke DirectSync agar dua aplikasi tidak bersaing menggunakan kanal jam yang sama.
+
+Tidak ada reset pabrik atau penghapusan database. DirectSync tidak menambah atau mengirim perintah ACK yang menghapus file kesehatan untuk mencoba mengosongkan antrean. Pengujian Mi Fitness menggunakan tombol Sync normal. Salinan diagnostik pribadi disimpan hanya pada `app/build/qa/sleep-latest-fix/` yang diabaikan Git. Pemeriksaan mengacu pada implementasi framing dan file Xiaomi di Gadgetbridge; [ACK data dapat menghapus salinan perangkat](https://gadgetbridge.org/basics/topics/multiple/).
+
 Tombol **Sync semua data** mengambil daftar file hari ini dan riwayat, kemudian mengunduh file yang didukung. Sambungkan jam melalui **Connect** terlebih dahulu. Setiap file diperiksa CRC32, padding, versi, dan batas payload sebelum disimpan. Nilai dengan validity bit kosong disimpan sebagai `null`, bukan angka nol.
 
 ## Data yang didukung

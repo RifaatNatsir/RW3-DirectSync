@@ -9,11 +9,13 @@ class XiaomiActivityTransfer {
     private var fileId: ByteArray? = null
     private var total = 0
     private var last = 0
+    private var previousChunk: ByteArray? = null
     private val buffer = ByteArrayOutputStream()
     val bytesBuffered get() = buffer.size()
+    val currentFileId get() = fileId?.copyOf()
 
     fun begin(id: ByteArray) { reset(); require(id.size == 7); fileId = id.copyOf() }
-    fun reset() { fileId = null; total = 0; last = 0; buffer.reset() }
+    fun reset() { fileId = null; total = 0; last = 0; previousChunk = null; buffer.reset() }
 
     fun accept(chunk: ByteArray): ByteArray? {
         require(chunk.size >= 4) { "Header chunk terpotong" }
@@ -21,10 +23,13 @@ class XiaomiActivityTransfer {
         val count = header.short.toInt() and 65535
         val number = header.short.toInt() and 65535
         require(count in 1..4096 && number in 1..count) { "Nomor chunk tidak valid: $number/$count" }
-        if (number == last && count == total) return null
+        if (previousChunk?.contentEquals(chunk) == true) return null
+        // A new first chunk is an explicit file boundary, including after an interrupted push.
+        if (number == 1 && last > 0) reset()
+        if (number == 1 && chunk.size >= 11) fileId = chunk.copyOfRange(4, 11)
         require(number == last + 1 && (total == 0 || count == total)) { "Urutan chunk terputus" }
         require(buffer.size() + chunk.size - 4 <= 4 * 1024 * 1024) { "File aktivitas terlalu besar" }
-        total = count; last = number
+        total = count; last = number; previousChunk = chunk.copyOf()
         buffer.write(chunk, 4, chunk.size - 4)
         if (number < count) return null
         val result = buffer.toByteArray()

@@ -8,10 +8,10 @@ class XiaomiActivityRequestQueue {
     private var attempts = 0
     val active: ByteArray? @Synchronized get() = current?.copyOf()
 
-    @Synchronized fun offer(id: ByteArray): Boolean {
+    @Synchronized fun offer(id: ByteArray, priority: Boolean = false): Boolean {
         require(id.size == 7)
         if (!seen.add(key(id))) return false
-        pending.addLast(id.copyOf())
+        if (priority) pending.addFirst(id.copyOf()) else pending.addLast(id.copyOf())
         return true
     }
 
