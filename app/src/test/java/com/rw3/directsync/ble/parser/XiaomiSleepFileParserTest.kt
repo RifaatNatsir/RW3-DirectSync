@@ -124,6 +124,24 @@ class XiaomiSleepFileParserTest {
         assertEquals(0, transfer.bytesBuffered)
     }
 
+    @Test fun nextPushedFileCanRecoverAfterInterruptedPreviousFile() {
+        val file = stagesFile()
+        val transfer = XiaomiActivityTransfer()
+        assertNull(transfer.accept(byteArrayOf(3, 0, 1, 0) + ByteArray(20) { 7 }))
+        assertNull(transfer.accept(byteArrayOf(2, 0, 1, 0) + file.copyOfRange(0, 20)))
+        assertArrayEquals(file, transfer.accept(byteArrayOf(2, 0, 2, 0) + file.copyOfRange(20, file.size)))
+    }
+
+    @Test fun partialPushExposesActualIdentityForTimeoutRecovery() {
+        val file = stagesFile()
+        val transfer = XiaomiActivityTransfer()
+        transfer.accept(byteArrayOf(2, 0, 1, 0) + file.copyOfRange(0, 20))
+        assertArrayEquals(file.copyOfRange(0, 7), transfer.currentFileId)
+        transfer.currentFileId!![0] = 99
+        assertArrayEquals(file.copyOfRange(0, 7), transfer.currentFileId)
+        transfer.reset(); assertNull(transfer.currentFileId)
+    }
+
     @Test(expected = IllegalArgumentException::class) fun transferRejectsMissingChunks() {
         val file = stagesFile()
         val transfer = XiaomiActivityTransfer()

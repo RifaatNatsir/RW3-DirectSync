@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/sleepInsightsRoot"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:background="@color/surface_dark">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:paddingHorizontal="16dp" android:gravity="center_vertical" android:orientation="horizontal">
+        <com.google.android.material.button.MaterialButton android:id="@+id/backToDashboard"
+            style="@style/SleepInsightButton" android:text="Kembali" />
+        <TextView style="@style/SleepInsightTitle" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_marginStart="12dp" android:text="Tren tidur" android:textSize="22sp" />
+    </LinearLayout>
+    <androidx.core.widget.NestedScrollView android:id="@+id/sleepInsightsScroll"
+        android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+        android:fillViewport="true" android:clipToPadding="false">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:padding="16dp" android:orientation="vertical">
+            <com.google.android.material.button.MaterialButtonToggleGroup android:id="@+id/sleepPeriod"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                app:singleSelection="true" app:selectionRequired="true" app:checkedButton="@id/sleepWeek">
+                <com.google.android.material.button.MaterialButton android:id="@+id/sleepWeek"
+                    style="@style/SleepInsightButton" android:layout_width="0dp" android:layout_weight="1" android:text="7 hari" />
+                <com.google.android.material.button.MaterialButton android:id="@+id/sleepMonth"
+                    style="@style/SleepInsightButton" android:layout_width="0dp" android:layout_weight="1" android:text="30 hari" />
+            </com.google.android.material.button.MaterialButtonToggleGroup>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginVertical="8dp">
+                <com.google.android.material.button.MaterialButton android:id="@+id/previousSleepPeriod"
+                    style="@style/SleepInsightButton" android:text="‹" android:contentDescription="Periode sebelumnya" android:minWidth="48dp" />
+                <TextView android:id="@+id/sleepDateRange" style="@style/SleepInsightCaption"
+                    android:layout_width="0dp" android:layout_weight="1" android:gravity="center" android:layout_marginTop="0dp" />
+                <com.google.android.material.button.MaterialButton android:id="@+id/nextSleepPeriod"
+                    style="@style/SleepInsightButton" android:text="›" android:contentDescription="Periode berikutnya" android:minWidth="48dp" />
+            </LinearLayout>
+            <LinearLayout style="@style/SleepInsightCard">
+                <TextView style="@style/SleepInsightTitle" android:text="Durasi tidur" />
+                <TextView android:id="@+id/sleepAverage" style="@style/SleepInsightTitle"
+                    android:layout_marginTop="12dp" android:textSize="30sp" android:textColor="@color/sleep_light" />
+                <TextView android:id="@+id/sleepCoverage" style="@style/SleepInsightCaption" />
+                <com.rw3.directsync.ui.custom.SleepDurationChartView android:id="@+id/sleepDurationChart"
+                    android:layout_width="match_parent" android:layout_height="210dp" android:layout_marginTop="16dp" android:focusable="true" />
+                <TextView style="@style/SleepInsightCaption" android:text="Total sesi per tanggal bangun, termasuk tidur singkat. Titik abu-abu: belum ada data. Ketuk batang untuk memilih hari." />
+                <TextView android:id="@+id/selectedSleepDay" style="@style/SleepInsightCaption" android:textColor="@color/sleep_light" android:accessibilityLiveRegion="polite" />
+            </LinearLayout>
+            <LinearLayout style="@style/SleepInsightCard">
+                <TextView style="@style/SleepInsightTitle" android:text="Konsistensi jadwal" />
+                <TextView style="@style/SleepInsightCaption" android:text="Sesi terlama per tanggal bangun. Jam utama = median; variasi = selisih rata-rata terhadap jam tersebut. Variasi lebih kecil berarti jadwal lebih konsisten." />
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp" android:orientation="horizontal" android:baselineAligned="false">
+                    <TextView android:id="@+id/sleepBedtimeStat" style="@style/SleepInsightStat"
+                        android:layout_marginEnd="8dp" android:textColor="@color/sleep_rem" />
+                    <TextView android:id="@+id/sleepWakeStat" style="@style/SleepInsightStat" android:textColor="@color/primary_mint" />
+                </LinearLayout>
+                <TextView android:id="@+id/sleepConsistencyStatus" style="@style/SleepInsightCaption" />
+                <com.rw3.directsync.ui.custom.SleepTimingChartView android:id="@+id/sleepTimingChart"
+                    android:layout_width="match_parent" android:layout_height="200dp" android:layout_marginTop="14dp" android:focusable="true" />
+                <TextView style="@style/SleepInsightCaption" android:text="Ungu: mulai tidur · Mint: bangun. Garis terputus jika data hari tersebut belum tersedia." />
+            </LinearLayout>
+            <LinearLayout style="@style/SleepInsightCard" android:id="@+id/sleepTimelineCard">
+                <TextView style="@style/SleepInsightTitle" android:text="Timeline sepanjang tidur" />
+                <TextView android:id="@+id/sleepSessionLabel" style="@style/SleepInsightCaption"
+                    android:text="Pilih sesi tidur" android:labelFor="@id/sleepSessionPicker" />
+                <Spinner android:id="@+id/sleepSessionPicker" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:minHeight="56dp" android:spinnerMode="dropdown"
+                    android:backgroundTint="@color/sleep_light" />
+                <TextView android:id="@+id/sleepSessionSummary" style="@style/SleepInsightTitle"
+                    android:layout_marginTop="12dp" android:textColor="@color/sleep_light" />
+                <TextView android:id="@+id/sleepSessionTimes" style="@style/SleepInsightCaption" />
+                <com.rw3.directsync.ui.custom.SleepTimelineView android:id="@+id/sleepTimeline"
+                    android:layout_width="match_parent" android:layout_height="240dp" android:layout_marginTop="16dp" android:focusable="true" />
+                <TextView android:id="@+id/sleepTimelineStatus" style="@style/SleepInsightCaption" />
+                <TextView android:id="@+id/selectedSleepPhase" style="@style/SleepInsightCaption"
+                    android:textColor="@color/on_surface" android:accessibilityLiveRegion="polite" />
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp" android:orientation="horizontal" android:baselineAligned="false">
+                    <TextView android:id="@+id/sleepDeepTotal" style="@style/SleepInsightStat" android:layout_marginEnd="8dp" android:textColor="@color/sleep_deep" />
+                    <TextView android:id="@+id/sleepLightTotal" style="@style/SleepInsightStat" android:textColor="@color/sleep_light" />
+                </LinearLayout>
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp" android:orientation="horizontal" android:baselineAligned="false">
+                    <TextView android:id="@+id/sleepRemTotal" style="@style/SleepInsightStat" android:layout_marginEnd="8dp" android:textColor="@color/sleep_rem" />
+                    <TextView android:id="@+id/sleepAwakeTotal" style="@style/SleepInsightStat" android:textColor="@color/sleep_awake" />
+                </LinearLayout>
+                <com.google.android.material.button.MaterialButton android:id="@+id/toggleSleepPhaseDetails"
+                    style="@style/SleepInsightButton" android:layout_width="match_parent" android:layout_marginTop="14dp" android:text="Rincian fase" />
+                <TextView android:id="@+id/sleepPhaseDetails" style="@style/SleepInsightCaption" android:visibility="gone" />
+            </LinearLayout>
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
+</LinearLayout>

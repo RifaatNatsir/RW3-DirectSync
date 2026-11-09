@@ -48,6 +48,12 @@ interface SleepStageDao {
     @Query("SELECT * FROM sleep_sessions ORDER BY endTimestamp DESC LIMIT 100")
     fun observeSessions(): Flow<List<SleepSessionEntity>>
 
+    @Query("SELECT * FROM sleep_sessions ORDER BY endTimestamp DESC")
+    fun observeInsightSessions(): Flow<List<SleepSessionEntity>>
+
+    @Query("SELECT * FROM sleep_stage_records WHERE source_file_id = :source AND end_timestamp > :start AND start_timestamp < :end ORDER BY start_timestamp ASC")
+    fun observeSessionStages(source: String, start: Long, end: Long): Flow<List<SleepStageEntity>>
+
     @Query("SELECT * FROM sleep_sessions WHERE startTimestamp = :start LIMIT 1")
     suspend fun getSession(start: Long): SleepSessionEntity?
 

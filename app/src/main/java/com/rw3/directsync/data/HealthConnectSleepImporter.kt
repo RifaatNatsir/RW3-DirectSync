@@ -55,6 +55,7 @@ class HealthConnectSleepImporter(private val context: Context) {
             }
             token = response.nextPageToken
         } while (token != -1L)
+        com.rw3.directsync.sync.SyncStatusRepository.get(context).importedSleep(count > 0)
         return count
     }
 }
