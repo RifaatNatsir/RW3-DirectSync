@@ -205,6 +205,13 @@
                             android:textAllCaps="false" />
                     </LinearLayout>
                 </LinearLayout>
+                <Button
+                    android:id="@+id/btnOpenSyncCenter"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginBottom="16dp" android:minHeight="48dp"
+                    android:text="Pusat status sinkronisasi" android:textAllCaps="false"
+                    android:textSize="14sp" android:textColor="@color/primary_mint"
+                    android:background="@drawable/bg_button_subtle" app:backgroundTint="@null" />
                 <LinearLayout
                     android:id="@+id/cardHeartRateStream"
                     android:layout_width="match_parent"
@@ -618,6 +625,12 @@
                         android:text="Rincian fase belum tersedia."
                         android:textSize="12sp"
                         android:textColor="@color/on_surface_variant" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnSleepInsights"
+                        style="@style/SleepInsightButton"
+                        android:layout_width="match_parent"
+                        android:layout_marginTop="14dp"
+                        android:text="Tren &amp; timeline tidur" />
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/cardSleepHistory"
@@ -1362,6 +1375,8 @@
                             android:textAllCaps="false" />
                     </LinearLayout>
                 </LinearLayout>
+                <include android:id="@+id/miFitnessHandoff" layout="@layout/item_mi_fitness_handoff"
+                    android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginBottom="16dp" />
                 <LinearLayout
                     android:id="@+id/cardSmartNotifications"
                     android:layout_width="match_parent"

@@ -50,8 +50,14 @@
         android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
 
+    <queries>
+        <package android:name="com.xiaomi.wearable" />
+    </queries>
+
     <application
         android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="RW3-DirectSync"
         android:supportsRtl="true"
         android:theme="@style/Theme.Rw3">
@@ -70,6 +76,8 @@
             android:name=".ui.WatchfaceActivity"
             android:exported="true"
             android:label="Koleksi &amp; Wallpaper Jam" />
+
+        <activity android:name=".ui.SleepInsightsActivity" android:exported="false" android:label="Tren tidur" />
 
         <!-- Dedicated BLE Foreground Service keeping Redmi Watch 3 connection alive -->
         <activity android:name=".ui.HealthDataPrivacyActivity" android:exported="true">

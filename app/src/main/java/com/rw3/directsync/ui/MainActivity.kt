@@ -45,6 +45,12 @@ import com.rw3.directsync.R
 import com.rw3.directsync.ble.BleSyncService
 import com.rw3.directsync.data.db.entity.ActivityRecordEntity
 import com.rw3.directsync.data.db.entity.SleepSessionEntity
+import com.rw3.directsync.sync.*
+import com.rw3.directsync.databinding.DialogSyncCenterBinding
+import com.rw3.directsync.databinding.ItemSyncMetricBinding
+import com.rw3.directsync.databinding.ItemMiFitnessHandoffBinding
+import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.rw3.directsync.data.HealthConnectSleepImporter
 import com.rw3.directsync.databinding.ActivityMainBinding
 import com.rw3.directsync.databinding.DialogAppWhitelistBinding
@@ -85,6 +91,11 @@ class MainActivity : AppCompatActivity() {
     private var bleService: BleSyncService? = null
     private var serviceStateJob: Job? = null
     private var pendingActionAfterPermission: (() -> Unit)? = null
+    private val syncStatuses by lazy { SyncStatusRepository.get(this) }
+    private val connectionMode by lazy { DirectSyncMode.get(this) }
+    private var syncCenterDialog: BottomSheetDialog? = null
+    private var syncCenterBinding: DialogSyncCenterBinding? = null
+    private val syncRows = mutableMapOf<SyncMetric, ItemSyncMetricBinding>()
     private var sleepImportRunning = false
     private var sleepHistoryRecords = emptyList<SleepSessionEntity>()
     private val sleepPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -117,6 +128,7 @@ class MainActivity : AppCompatActivity() {
             val service = localBinder.getService()
             bleService = service
             service.autoConnectFromSavedPrefsIfIdle()
+            service.refreshHistoryIfStale()
             serviceStateJob?.cancel()
             serviceStateJob = lifecycleScope.launch {
                 repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -183,6 +195,15 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         updateNotificationUiState()
+        bleService?.refreshHistoryIfStale()
+        binding.root.post {
+            if (!isFinishing && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) && connectionMode.consumeReturnPrompt()) {
+                AlertDialog.Builder(this).setTitle("Lanjutkan DirectSync?")
+                    .setMessage("Selesai menggunakan Mi Fitness? DirectSync akan menghubungkan jam kembali setelah Anda memilih Lanjutkan.")
+                    .setPositiveButton("Lanjutkan") { _, _ -> resumeDirectSync() }
+                    .setNegativeButton("Tetap dijeda", null).show()
+            }
+        }
     }
 
     private fun updateNotificationUiState() {
@@ -210,6 +231,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onDestroy() {
+        syncCenterDialog?.dismiss()
+        super.onDestroy()
+    }
+
     override fun onStart() {
         super.onStart()
         Intent(this, BleSyncService::class.java).also { intent ->
@@ -226,7 +252,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupListeners() {
+        binding.btnOpenSyncCenter.setOnClickListener { showSyncCenter() }
+        setupHandoff(binding.miFitnessHandoff)
         binding.btnViewSleepHistory.setOnClickListener { showAllSleepHistory() }
+        binding.btnSleepInsights.setOnClickListener {
+            startActivity(Intent(this, SleepInsightsActivity::class.java))
+        }
         binding.btnImportSleepHistory.setOnClickListener {
             binding.tvSleepImportStatus.visibility = View.VISIBLE
             if (Build.VERSION.SDK_INT < 34) {
@@ -371,6 +402,8 @@ class MainActivity : AppCompatActivity() {
         val settings = tab == NavTab.SETTINGS
         binding.layoutDashboardContainer.requestFocus()
         binding.layoutOverviewHeading.visibility = if (tab == NavTab.DASHBOARD) View.VISIBLE else View.GONE
+        binding.btnOpenSyncCenter.visibility = if (tab == NavTab.DASHBOARD) View.VISIBLE else View.GONE
+        binding.miFitnessHandoff.root.visibility = if (settings) View.VISIBLE else View.GONE
         listOf(binding.cardDeviceIdentity, binding.cardSmartNotifications,
             binding.cardMediaAndAutoReconnect, binding.cardWatchfaceWallpaper, binding.cardTelemetryPipeline).forEach {
             it.visibility = if (settings) View.VISIBLE else View.GONE
@@ -456,6 +489,9 @@ class MainActivity : AppCompatActivity() {
     private fun observeViewModel() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch { syncStatuses.entries.collect { renderSyncCenter() } }
+                launch { viewModel.syncMetricEvidence.collect { renderSyncCenter() } }
+                launch { connectionMode.paused.collect { updateUiForSyncState(viewModel.syncState.value) } }
                 // 1. MAC Address
                 launch {
                     viewModel.macAddress.collect { mac ->
@@ -688,6 +724,7 @@ class MainActivity : AppCompatActivity() {
     private fun importSleepHistory() {
         if (Build.VERSION.SDK_INT < 34 || sleepImportRunning) return
         sleepImportRunning = true
+        renderSyncCenter()
         binding.btnImportSleepHistory.isEnabled = false
         binding.tvSleepImportStatus.visibility = View.VISIBLE
         binding.tvSleepImportStatus.text = "Mengambil riwayat tidur Mi Fitness…"
@@ -698,10 +735,12 @@ class MainActivity : AppCompatActivity() {
                 else "Belum ada tidur Mi Fitness di Health Connect. Sinkronkan tidur di Mi Fitness, lalu coba kembali."
             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
             catch (e: Exception) {
+                syncStatuses.importFailed(e.message ?: "Periksa izin Health Connect.")
                 binding.tvSleepImportStatus.text = "Riwayat belum dapat dibaca: ${e.message ?: "periksa izin Health Connect"}"
             } finally {
                 sleepImportRunning = false
                 binding.btnImportSleepHistory.isEnabled = true
+                renderSyncCenter()
             }
         }
     }
@@ -786,31 +825,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showSleepDetails(session: SleepSessionEntity) {
-        val density = resources.displayMetrics.density
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            val pad = (20 * density).toInt()
-            setPadding(pad, pad, pad, pad)
-        }
-        fun text(value: String, size: Float = 14f) {
-            content.addView(TextView(this).apply {
-                this.text = value; textSize = size
-                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.on_surface))
-                setPadding(0, 0, 0, (12 * density).toInt())
-            })
-        }
-        text(formatSleepMinutes(session.totalMinutes), 30f)
-        text("${metricTime(session.startTimestamp)} – ${metricTime(session.endTimestamp)}")
-        val bar = com.rw3.directsync.ui.custom.SleepPhaseBarView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(-1, (28 * density).toInt())
-            setPhases(session.deepMinutes.takeIf { session.hasStageData }, session.lightMinutes.takeIf { session.hasStageData },
-                session.remMinutes.takeIf { session.hasStageData })
-        }
-        content.addView(bar)
-        if (session.hasStageData) text("\nDeep ${formatSleepMinutes(session.deepMinutes)}\nLight ${formatSleepMinutes(session.lightMinutes)}\nREM ${formatSleepMinutes(session.remMinutes)}\nTerjaga ${formatSleepMinutes(session.awakeMinutes)}")
-        else text("\nRincian Deep, Light, dan REM belum dilaporkan untuk sesi ini.")
-        text(if (session.sourceFileId.startsWith("healthconnect:")) "Sumber: Mi Fitness" else "Sumber: smartwatch", 12f)
-        AlertDialog.Builder(this).setTitle("Detail tidur").setView(content).setPositiveButton("Tutup", null).show()
+        startActivity(Intent(this, SleepInsightsActivity::class.java)
+            .putExtra(SleepInsightsActivity.EXTRA_SESSION_START, session.startTimestamp))
     }
 
     private fun metricTime(timestamp: Long): String =
@@ -951,6 +967,16 @@ class MainActivity : AppCompatActivity() {
                 binding.tvAutoReconnectStatus.text = "Error: ${state.message}"
             }
         }
+        if (connectionMode.paused.value) {
+            binding.tvHeaderGattStatus.text = " Dijeda · Mi Fitness"
+            binding.tvDeviceStatusTag.text = "Jeda Mi Fitness"
+            binding.btnDashboardConnect.text = "Lanjutkan DirectSync"
+            binding.btnSyncAll.isEnabled = false
+            binding.btnToggleHeartRate.isEnabled = false
+            binding.tvAutoReconnectStatus.text = "DirectSync dijeda sampai Anda memilih Lanjutkan."
+        }
+        binding.btnConnectMain.text = if (connectionMode.paused.value) "Lanjutkan" else "Hubungkan"
+        renderSyncCenter()
     }
 
     @SuppressLint("SetTextI18n")
@@ -968,6 +994,146 @@ class MainActivity : AppCompatActivity() {
             binding.tvMediaStatusBadge.text = if (hasTrack) "Jeda" else "Siap"
             binding.tvMediaStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.secondary_cyan))
             binding.btnMediaPlayPause.text = "▶ Play"
+        }
+    }
+
+    private fun setupHandoff(item: ItemMiFitnessHandoffBinding) {
+        item.btnPauseMiFitness.setOnClickListener { openMiFitness() }
+        item.btnResumeDirectSync.setOnClickListener { resumeDirectSync() }
+    }
+
+    private fun resumeDirectSync() {
+        syncCenterDialog?.dismiss()
+        ensurePermissionsAndRun { validateAndStartBleService() }
+    }
+
+    private fun openMiFitness() {
+        val launchIntent = packageManager.getLaunchIntentForPackage("com.xiaomi.wearable")
+        if (launchIntent == null) {
+            Toast.makeText(this, "Mi Fitness belum terpasang di HP ini.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val wasPaused = connectionMode.paused.value
+        val wasConnected = bleService?.watchfaceUploadReady?.value == true
+        val service = bleService
+        if (!wasPaused && service == null) {
+            Toast.makeText(this, "Layanan sedang disiapkan. Coba sebentar lagi.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (!wasPaused && service?.pauseForMiFitness() != true) {
+            Toast.makeText(this, "Selesaikan unggah watchface sebelum beralih ke Mi Fitness.", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (wasPaused) connectionMode.pause()
+        syncCenterDialog?.dismiss()
+        try {
+            startActivity(launchIntent)
+        } catch (e: android.content.ActivityNotFoundException) {
+            if (!wasPaused) { connectionMode.resume(); if (wasConnected) resumeDirectSync() }
+            Toast.makeText(this, "Mi Fitness tidak dapat dibuka.", Toast.LENGTH_LONG).show()
+        } catch (e: SecurityException) {
+            if (!wasPaused) { connectionMode.resume(); if (wasConnected) resumeDirectSync() }
+            Toast.makeText(this, "Android tidak mengizinkan Mi Fitness dibuka.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun retryFromSyncCenter(metric: SyncMetric) {
+        val failures = syncStatuses.entries.value.getValue(metric).failures
+        val importOnly = metric == SyncMetric.SLEEP && failures.keys == setOf("#import")
+        if (!importOnly) {
+            val service = bleService
+            val error = if (service == null) "Hubungkan jam terlebih dahulu." else service.retryMetric(metric)
+            if (error != null) { Toast.makeText(this, error, Toast.LENGTH_LONG).show(); return }
+            Toast.makeText(this, "Meminta ulang ${metric.title.lowercase()}…", Toast.LENGTH_SHORT).show()
+        }
+        if (metric == SyncMetric.SLEEP && Build.VERSION.SDK_INT >= 34) {
+            if (ContextCompat.checkSelfPermission(this, HealthConnectSleepImporter.READ_SLEEP) == PackageManager.PERMISSION_GRANTED)
+                importSleepHistory()
+            else if (failures.containsKey("#import")) sleepPermissionLauncher.launch(HealthConnectSleepImporter.READ_SLEEP)
+        }
+    }
+
+    private fun showSyncCenter() {
+        if (syncCenterDialog != null) return
+        val content = DialogSyncCenterBinding.inflate(layoutInflater)
+        val dialog = BottomSheetDialog(this)
+        syncCenterBinding = content
+        syncCenterDialog = dialog
+        SyncMetric.entries.forEach { metric ->
+            val row = ItemSyncMetricBinding.inflate(layoutInflater, content.layoutSyncMetrics, false)
+            row.metricTitle.text = metric.title
+            row.btnRetryMetric.setOnClickListener { retryFromSyncCenter(metric) }
+            content.layoutSyncMetrics.addView(row.root)
+            syncRows[metric] = row
+        }
+        setupHandoff(content.handoff)
+        content.btnCloseSyncCenter.setOnClickListener { dialog.dismiss() }
+        dialog.setContentView(content.root)
+        dialog.setOnDismissListener { syncCenterDialog = null; syncCenterBinding = null; syncRows.clear() }
+        dialog.show()
+        dialog.findViewById<FrameLayout>(com.google.android.material.R.id.design_bottom_sheet)?.let { sheet ->
+            sheet.layoutParams.height = (resources.displayMetrics.heightPixels * 0.88).toInt()
+            BottomSheetBehavior.from(sheet).apply { state = BottomSheetBehavior.STATE_EXPANDED; skipCollapsed = true }
+        }
+        renderSyncCenter()
+    }
+
+    @SuppressLint("SetTextI18n")
+    private fun renderSyncCenter() {
+        val paused = connectionMode.paused.value
+        val ready = bleService?.watchfaceUploadReady?.value == true && !paused
+        val entries = syncStatuses.entries.value
+        val busy = entries.values.any { it.inProgress }
+        val message = when {
+            paused -> "DirectSync dijeda untuk Mi Fitness. Pilih Lanjutkan untuk terhubung kembali."
+            ready && busy -> "Sedang mengambil data dari jam…"
+            ready -> "Jam terhubung. Data yang tersedia tersimpan di HP."
+            else -> "Jam belum terhubung. Hubungkan jam untuk mencoba pengambilan ulang."
+        }
+        fun handoff(item: ItemMiFitnessHandoffBinding) {
+            item.tvConnectionMode.text = if (paused) message else "Jeda koneksi DirectSync sebelum menggunakan Mi Fitness agar koneksi jam tidak berebut."
+            item.btnPauseMiFitness.text = if (paused) "Buka Mi Fitness" else "Jeda DirectSync & buka Mi Fitness"
+            item.btnResumeDirectSync.visibility = if (paused) View.VISIBLE else View.GONE
+        }
+        handoff(binding.miFitnessHandoff)
+        syncCenterBinding?.let { content ->
+            content.tvSyncCenterConnection.text = message
+            handoff(content.handoff)
+        }
+        val time = java.text.SimpleDateFormat("dd MMM yyyy HH:mm", Locale("id", "ID"))
+        fun date(value: Long?) = value?.let { time.format(java.util.Date(it)) } ?: "Belum tercatat"
+        syncRows.forEach { (metric, row) ->
+            val entry = entries.getValue(metric)
+            val evidence = viewModel.syncMetricEvidence.value[metric] ?: SyncMetricEvidence()
+            val label = metricSyncLabel(entry.copy(inProgress = entry.inProgress || (metric == SyncMetric.SLEEP && sleepImportRunning)), evidence.complete)
+            val importOnly = metric == SyncMetric.SLEEP && entry.failures.keys == setOf("#import")
+            val color = ContextCompat.getColor(this, when (label) {
+                MetricSyncLabel.COMPLETE -> R.color.primary_mint
+                MetricSyncLabel.FAILED -> R.color.heart_rate_coral
+                MetricSyncLabel.SYNCING -> R.color.secondary_cyan
+                MetricSyncLabel.UNAVAILABLE -> R.color.on_surface_variant
+            })
+            row.metricStatus.text = when (label) {
+                MetricSyncLabel.COMPLETE -> "Lengkap"
+                MetricSyncLabel.UNAVAILABLE -> "Belum tersedia"
+                MetricSyncLabel.FAILED -> "Gagal diunduh"
+                MetricSyncLabel.SYNCING -> "Menyinkronkan"
+            }
+            row.metricStatus.setTextColor(color)
+            row.metricStatus.backgroundTintList = ColorStateList.valueOf(androidx.core.graphics.ColorUtils.setAlphaComponent(color, 28))
+            row.metricValue.text = evidence.value
+            row.metricDataTime.text = "Data terakhir · ${date(evidence.dataAt)}"
+            row.metricSyncTime.text = "Diterima · ${date(entry.receivedAt)}\nDiperiksa · ${date(entry.checkedAt)}"
+            row.metricDetail.text = if (label == MetricSyncLabel.SYNCING)
+                if (metric == SyncMetric.SLEEP && sleepImportRunning) "Membaca sesi Mi Fitness…" else "Sedang memeriksa ulang data…"
+                else entry.failures.values.distinct().take(2).joinToString("\n").ifEmpty { evidence.detail }
+            row.metricDetail.visibility = if (row.metricDetail.text.isEmpty()) View.GONE else View.VISIBLE
+            row.metricDetail.setTextColor(if (label == MetricSyncLabel.FAILED) color else ContextCompat.getColor(this, R.color.on_surface_variant))
+            row.btnRetryMetric.visibility = if (label == MetricSyncLabel.FAILED || label == MetricSyncLabel.UNAVAILABLE) View.VISIBLE else View.GONE
+            row.btnRetryMetric.text = if (importOnly) "Coba impor Mi Fitness" else "Coba lagi"
+            row.btnRetryMetric.isEnabled = (ready || importOnly) && !busy && !sleepImportRunning
+            row.btnRetryMetric.alpha = if (row.btnRetryMetric.isEnabled) 1f else 0.5f
+            row.btnRetryMetric.contentDescription = "Coba lagi ${metric.title}"
         }
     }
 
@@ -1061,6 +1227,7 @@ class MainActivity : AppCompatActivity() {
             onSuccess = { (mac, authKey, webhookUrl) ->
                 val serviceIntent = Intent(this, BleSyncService::class.java).apply {
                     action = BleSyncService.ACTION_START_SYNC
+                    putExtra(BleSyncService.EXTRA_EXPLICIT_RESUME, true)
                     putExtra(BleSyncService.EXTRA_MAC_ADDRESS, mac)
                     putExtra(BleSyncService.EXTRA_AUTH_KEY, authKey)
                     putExtra(BleSyncService.EXTRA_WEBHOOK_URL, webhookUrl)

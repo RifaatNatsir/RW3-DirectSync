@@ -22,6 +22,8 @@ import kotlinx.coroutines.launch
 import com.rw3.directsync.data.SleepHistoryCache
 import com.rw3.directsync.data.ActivityHistoryCache
 import com.rw3.directsync.data.DailyActivityReducer
+import com.rw3.directsync.sync.SyncMetric
+import com.rw3.directsync.sync.SyncMetricEvidence
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.Dispatchers
 
@@ -196,6 +198,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         .stateIn(viewModelScope, SharingStarted.Lazily, SleepSummary())
+
+    private val dailyMetricTimes = combine(db.activityRecordDao().observeDailySnapshots(), db.dailyActivityMinuteDao().observeRecent()) { snapshots, minutes ->
+        mapOf(
+            SyncMetric.STEPS to (snapshots.filter { it.steps != null }.map { it.timestamp } + minutes.filter { it.steps != null }.map { it.timestamp }).maxOrNull(),
+            SyncMetric.CALORIES to (snapshots.filter { it.calories != null }.map { it.timestamp } + minutes.filter { it.calories != null }.map { it.timestamp }).maxOrNull()
+        )
+    }
+    private val dailySyncEvidence = combine(dailyActivity, dailyMetricTimes) { daily, times -> daily to times }
+    val syncMetricEvidence = combine(latestHeartRate, sleepSummary, dailySyncEvidence, workouts, clock) { hr, sleep, dailySource, sports, now ->
+        val (daily, times) = dailySource
+        val zone = java.time.ZoneId.systemDefault()
+        val today = java.time.Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+        val dailyIsToday = daily != null && java.time.Instant.ofEpochMilli(daily.timestamp).atZone(zone).toLocalDate() == today
+        mapOf(
+            SyncMetric.HEART_RATE to SyncMetricEvidence(hr?.timestamp, hr?.let { "${it.bpm} BPM" } ?: "Belum ada sampel HR", hr != null),
+            SyncMetric.SLEEP to SyncMetricEvidence(sleep.endTimestamp.takeIf { sleep.hasData },
+                if (sleep.hasData) "${sleep.totalMinutes / 60}j ${sleep.totalMinutes % 60}m" else "Belum ada sesi tidur",
+                sleep.hasData && sleep.hasStageData,
+                if (sleep.hasData && !sleep.hasStageData) "Durasi tersedia. Rincian fase belum tersedia dari sumber data." else ""),
+            SyncMetric.STEPS to SyncMetricEvidence(times[SyncMetric.STEPS], daily?.steps?.let { "$it langkah" } ?: "Belum ada data langkah",
+                dailyIsToday && daily?.steps != null, if (!dailyIsToday) "Belum ada data langkah untuk hari ini." else ""),
+            SyncMetric.CALORIES to SyncMetricEvidence(times[SyncMetric.CALORIES], daily?.calories?.let { "$it kkal" } ?: "Belum ada data kalori",
+                dailyIsToday && daily?.calories != null, if (!dailyIsToday) "Belum ada data kalori untuk hari ini." else ""),
+            SyncMetric.WORKOUTS to SyncMetricEvidence(sports.firstOrNull()?.let { it.endTimestamp ?: it.timestamp },
+                if (sports.isNotEmpty()) "Riwayat olahraga tersedia" else "Belum ada sesi olahraga", sports.isNotEmpty())
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     fun saveCredentialsAndWebhook(
         mac: String,
