@@ -80,6 +80,112 @@
             android:orientation="vertical"
             android:padding="16dp">
 
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:background="@drawable/bg_card"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Desain jam"
+                    android:textColor="@color/on_surface"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/layoutWatchfaceDesign"
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                    app:endIconMode="custom"
+                    app:endIconDrawable="@drawable/ic_watchface_expand"
+                    app:endIconContentDescription="Pilih desain jam"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:hint="Pilih watchface">
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/dropdownWatchfaceDesign"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="none"
+                        android:focusable="false"
+                        android:clickable="true"
+                        android:cursorVisible="false"
+                        android:longClickable="false"
+                        android:textColor="@color/on_surface"
+                        android:textSize="14sp" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <TextView
+                    android:id="@+id/tvTemplateStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Pilih desain jam, lalu gunakan foto Anda sebagai latarnya."
+                    android:textColor="@color/on_surface_variant"
+                    android:textSize="12sp" />
+
+                <Button
+                    android:id="@+id/btnPickWatchfaceTemplate"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="8dp"
+                    android:text="Pilih berkas Green Glass asli"
+                    android:textSize="12sp"
+                    android:visibility="gone" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/cardTextAppearance"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:background="@drawable/bg_card"
+                android:orientation="vertical"
+                android:padding="16dp">
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Tampilan angka"
+                    android:textColor="@color/on_surface"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+                <Button
+                    android:id="@+id/btnTextColor"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="8dp"
+                    android:text="Warna angka · Asli"
+                    android:textSize="13sp" />
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/switchTextShadow"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:text="Bayangan halus"
+                    android:textColor="@color/on_surface"
+                    android:textSize="13sp" />
+                <TextView
+                    android:id="@+id/tvShadowFeather"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Kehalusan bayangan · 3 px"
+                    android:textColor="@color/on_surface_variant"
+                    android:textSize="12sp" />
+                <com.google.android.material.slider.Slider
+                    android:id="@+id/sliderShadowFeather"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:contentDescription="Kehalusan bayangan angka"
+                    android:valueFrom="1"
+                    android:valueTo="6"
+                    android:stepSize="1"
+                    android:value="3" />
+            </LinearLayout>
+
             <!-- Card 1: Redmi Watch 3 AMOLED Preview -->
             <LinearLayout
                 android:layout_width="match_parent"
@@ -249,6 +355,16 @@
                     android:layout_marginTop="4dp"
                     android:text="Pastikan jam berada dekat dengan HP selama proses pengiriman data berlangsung."
                     android:textColor="@color/on_surface_variant"
+                    android:textSize="12sp" />
+
+                <Button
+                    android:id="@+id/btnExportWatchface"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="12dp"
+                    android:enabled="false"
+                    android:text="Simpan berkas watchface (.bin)"
                     android:textSize="12sp" />
 
                 <!-- Main Install Button -->

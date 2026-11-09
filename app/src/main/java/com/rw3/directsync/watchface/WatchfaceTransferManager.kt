@@ -6,6 +6,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,7 +37,9 @@ class WatchfaceTransferManager(
     private val scope: CoroutineScope,
     private val sender: TransportSender,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
-    private val chunkDelayMs: Long = DEFAULT_CHUNK_DELAY_MS
+    private val chunkDelayMs: Long = DEFAULT_CHUNK_DELAY_MS,
+    private val verificationTimeoutMs: Long = 20_000L,
+    private val onFinished: () -> Unit = {}
 ) {
 
     interface TransportSender {
@@ -45,6 +48,7 @@ class WatchfaceTransferManager(
         fun sendDataChunk(chunk: ByteArray, channel: Int = 5): Boolean
         fun sendInstallFinish(watchfaceId: String): Boolean
         fun sendWatchfaceSet(watchfaceId: String): Boolean
+        fun queryWatchfaces() {}
         fun appendLog(message: String)
     }
 
@@ -140,8 +144,7 @@ class WatchfaceTransferManager(
                 // Fallback timeout in case watch does not reply with DataUploadAck within 10s
                 delay(10_000)
                 if (_transferState.value is WatchfaceTransferState.PreparingUpload) {
-                    sender.appendLog("[Watchface] Menggunakan ukuran chunk standar ($DEFAULT_CHUNK_SIZE b) untuk transfer.")
-                    executeChunkStream(data, resumePosition = 0, chunkSize = DEFAULT_CHUNK_SIZE)
+                    failTransfer("Jam tidak mengonfirmasi permohonan unggah. Coba hubungkan ulang.")
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -168,8 +171,13 @@ class WatchfaceTransferManager(
     /**
      * Called when the watch responds with DataUploadAck (Command type=22, subtype=0).
      */
-    fun onDataUploadAckReceived(resumePos: Int, chunkSize: Int) {
+    fun onDataUploadAckReceived(resumePos: Int, chunkSize: Int, md5: ByteArray? = null) {
         val data = pendingPackageData ?: return
+        if (md5 != null && !md5.contentEquals(MessageDigest.getInstance("MD5").digest(data))) return
+        if (resumePos !in 0..data.size) {
+            failTransfer("Posisi unggah dari jam tidak valid.")
+            return
+        }
         if (_transferState.value !is WatchfaceTransferState.PreparingUpload &&
             _transferState.value !is WatchfaceTransferState.Uploading
         ) return
@@ -197,6 +205,7 @@ class WatchfaceTransferManager(
 
         var partIndex = 0
         while (scope.isActive && partIndex < totalParts) {
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
             val currentPart = partIndex + 1
             val startIndex = partIndex * partSize
             val endIndex = min(startIndex + partSize, massPayload.size)
@@ -246,8 +255,18 @@ class WatchfaceTransferManager(
             _transferState.value = WatchfaceTransferState.Verifying(currentWatchfaceId)
 
             delay(400)
-            sender.sendWatchfaceSet(currentWatchfaceId)
-            completeTransfer("Watchface berhasil terpasang dan aktif di Redmi Watch 3!")
+            if (!sender.sendWatchfaceSet(currentWatchfaceId)) {
+                failTransfer("Gagal meminta aktivasi watchface.")
+                return
+            }
+            var elapsed = 0L
+            while (_transferState.value is WatchfaceTransferState.Verifying && elapsed < verificationTimeoutMs) {
+                sender.queryWatchfaces()
+                delay(500)
+                elapsed += 500
+            }
+            if (_transferState.value is WatchfaceTransferState.Verifying)
+                failTransfer("Data terkirim, tetapi jam belum mengonfirmasi watchface aktif. Periksa daftar watchface sebelum mencoba ulang.")
         }
     }
 
@@ -273,10 +292,9 @@ class WatchfaceTransferManager(
 
         if (status == 0 || status == 2) {
             if (currentState is WatchfaceTransferState.Verifying) {
-                currentJob?.cancel()
                 sender.appendLog("[Watchface] Konfirmasi instalasi diterima dari jam (status=$status). Mengaktifkan watchface...")
                 sender.sendWatchfaceSet(currentWatchfaceId)
-                completeTransfer("Watchface berhasil terpasang dan aktif di Redmi Watch 3!")
+                sender.queryWatchfaces()
             }
         } else {
             failTransfer("Jam menolak instalasi paket (kode status: $status).")
@@ -289,6 +307,7 @@ class WatchfaceTransferManager(
         currentJob = null
         pendingPackageData = null
         _transferState.value = WatchfaceTransferState.Idle
+        onFinished()
         sender.appendLog("[Watchface] Pemasangan dibatalkan oleh pengguna.")
     }
 
@@ -296,6 +315,7 @@ class WatchfaceTransferManager(
         val id = currentWatchfaceId
         pendingPackageData = null
         _transferState.value = WatchfaceTransferState.Success(id, message)
+        onFinished()
         sender.appendLog("[Watchface] Sukses: $message")
     }
 
@@ -304,6 +324,16 @@ class WatchfaceTransferManager(
         currentJob = null
         pendingPackageData = null
         _transferState.value = WatchfaceTransferState.Error(errorMsg)
+        onFinished()
         sender.appendLog("[Watchface] Gagal: $errorMsg")
+    }
+
+    fun onWatchfaceActiveReported(id: String) {
+        if (_transferState.value is WatchfaceTransferState.Verifying && id == currentWatchfaceId)
+            completeTransfer("Watchface terpasang dan dikonfirmasi aktif oleh jam.")
+    }
+
+    fun onConnectionLost() {
+        if (isTransferActive()) failTransfer("Koneksi jam terputus saat unggah. Hubungkan kembali sebelum mencoba ulang.")
     }
 }

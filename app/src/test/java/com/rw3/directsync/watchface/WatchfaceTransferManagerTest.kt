@@ -115,6 +115,10 @@ class WatchfaceTransferManagerTest {
 
         // Verify watchface activation and success state
         assertTrue(waitUntil { sender.calls.contains("WatchfaceSet(265246003)") })
+        assertTrue(manager.transferState.value is WatchfaceTransferState.Verifying)
+        manager.onWatchfaceActiveReported("other_face")
+        assertTrue(manager.transferState.value is WatchfaceTransferState.Verifying)
+        manager.onWatchfaceActiveReported("265246003")
         assertTrue(waitUntil { manager.transferState.value is WatchfaceTransferState.Success })
         val state = manager.transferState.value
         assertTrue(state is WatchfaceTransferState.Success)
@@ -213,5 +217,41 @@ class WatchfaceTransferManagerTest {
         assertEquals(w, width)
         assertEquals(h, height)
         assertEquals(12 + rlePayloadSize, block.size)
+    }
+
+    @Test
+    fun unconfirmedActivationTimesOutInsteadOfReportingSuccess() = runBlocking {
+        val sender = MockTransportSender()
+        val manager = WatchfaceTransferManager(CoroutineScope(Dispatchers.Default), sender,
+            chunkDelayMs = 0, verificationTimeoutMs = 500)
+        manager.startUpload("wf_unconfirmed", ByteArray(1024))
+        manager.onDataUploadAckReceived(0, 4096)
+        assertTrue(waitUntil(3000) { manager.transferState.value is WatchfaceTransferState.Error })
+        assertTrue((manager.transferState.value as WatchfaceTransferState.Error).message.contains("belum mengonfirmasi"))
+    }
+
+    @Test
+    fun mismatchedAckDoesNotSendChunks() = runBlocking {
+        val sender = MockTransportSender()
+        val manager = WatchfaceTransferManager(CoroutineScope(Dispatchers.Default), sender)
+        manager.startUpload("wf_ack", ByteArray(1024))
+        manager.onDataUploadAckReceived(0, 4096, ByteArray(16) { 7 })
+        delay(100)
+        assertTrue(sender.sentChunks.isEmpty())
+        manager.cancelTransfer()
+    }
+
+    @Test
+    fun lostTransportReportsErrorAndStopsTransfer() = runBlocking {
+        val sender = MockTransportSender()
+        val manager = WatchfaceTransferManager(CoroutineScope(Dispatchers.Default), sender, chunkDelayMs = 100)
+        manager.startUpload("wf_disconnect", ByteArray(20000))
+        manager.onDataUploadAckReceived(0, 4096)
+        assertTrue(waitUntil { sender.sentChunks.isNotEmpty() })
+        manager.onConnectionLost()
+        val count = sender.sentChunks.size
+        delay(150)
+        assertTrue(manager.transferState.value is WatchfaceTransferState.Error)
+        assertEquals(count, sender.sentChunks.size)
     }
 }
