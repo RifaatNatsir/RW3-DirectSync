@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    style="@style/SettingsCard">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <ImageView
+            style="@style/SettingsIcon"
+            android:src="@drawable/ic_radar"
+            app:tint="@color/secondary_cyan" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="12dp"
+            android:orientation="vertical">
+
+            <TextView
+                style="@style/SettingsTitle"
+                android:text="Cari perangkat" />
+
+            <TextView
+                style="@style/SettingsBody"
+                android:layout_marginTop="2dp"
+                android:text="Temukan jam atau HP yang berada di dekat Anda." />
+        </LinearLayout>
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/tvFinderStatus"
+        style="@style/SettingsBody"
+        android:layout_marginTop="12dp"
+        android:background="@drawable/bg_box_dark"
+        android:padding="12dp"
+        android:textColor="@color/on_surface"
+        android:accessibilityLiveRegion="polite" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnFindWatch"
+        style="@style/SettingsButton"
+        android:layout_marginTop="12dp"
+        android:text="Kirim sinyal ke jam"
+        app:icon="@drawable/ic_watch" />
+
+    <TextView
+        style="@style/SettingsBody"
+        android:layout_marginTop="8dp"
+        android:text="Pada Redmi Watch 3, sinyal berupa pengingat disertai getaran sesuai pengaturan jam, berulang hingga 30 detik. Hentikan dari HP atau tutup pengingat di jam." />
+
+    <TextView
+        android:id="@+id/tvPhoneFinderStatus"
+        style="@style/SettingsBody"
+        android:layout_marginTop="12dp"
+        android:background="@drawable/bg_box_dark"
+        android:padding="12dp"
+        android:text="Untuk mencari HP, buka menu Cari HP di smartwatch. HP berdering dan bergetar hingga 60 detik."
+        android:accessibilityLiveRegion="polite" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnStopPhoneFinder"
+        style="@style/SettingsDangerButton"
+        android:layout_marginTop="10dp"
+        android:text="Hentikan bunyi HP"
+        app:icon="@drawable/ic_power"
+        android:visibility="gone" />
+
+    <TextView
+        style="@style/SettingsBody"
+        android:layout_marginTop="8dp"
+        android:textColor="@color/on_surface_muted"
+        android:text="Memerlukan koneksi DirectSync aktif dalam jangkauan Bluetooth. Suara HP mengikuti volume alarm; getaran jam mengikuti pengaturan notifikasi dan Jangan Ganggu." />
+</LinearLayout>

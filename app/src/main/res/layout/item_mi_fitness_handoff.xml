@@ -1,18 +1,83 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical"
-    android:background="@drawable/bg_subcard" android:padding="16dp">
-    <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Koneksi &amp; Mi Fitness" android:textColor="@color/on_surface" android:textSize="16sp" android:textStyle="bold" />
-    <TextView android:id="@+id/tvConnectionMode" android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:layout_marginTop="8dp" android:text="DirectSync siap digunakan." android:textSize="13sp"
-        android:textColor="@color/on_surface_variant" />
-    <Button android:id="@+id/btnPauseMiFitness" android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:layout_marginTop="12dp" android:text="Jeda DirectSync &amp; buka Mi Fitness" android:textAllCaps="false"
-        android:textSize="13sp" android:minHeight="52dp" android:background="@drawable/bg_button_subtle"
-        app:backgroundTint="@null" android:textColor="@color/on_surface" />
-    <Button android:id="@+id/btnResumeDirectSync" android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:layout_marginTop="6dp" android:text="Lanjutkan DirectSync" android:textAllCaps="false" android:visibility="gone"
-        android:textSize="14sp" android:minHeight="48dp" android:background="@drawable/bg_button_emerald"
-        app:backgroundTint="@null" android:textColor="@color/btn_emerald_text" />
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    style="@style/SettingsCard">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <ImageView
+            style="@style/SettingsIcon"
+            android:src="@drawable/ic_sync"
+            app:tint="@color/secondary_cyan" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:layout_marginStart="12dp">
+
+            <TextView
+                style="@style/SettingsTitle"
+                android:text="Beralih ke Mi Fitness" />
+
+            <TextView
+                style="@style/SettingsBody"
+                android:layout_marginTop="2dp"
+                android:text="Gunakan kedua aplikasi secara bergantian." />
+        </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:orientation="vertical"
+        android:background="@drawable/bg_box_dark"
+        android:padding="12dp">
+
+        <TextView
+            android:id="@+id/tvConnectionMode"
+            style="@style/SettingsBody"
+            android:textColor="@color/on_surface"
+            android:text="DirectSync siap digunakan." />
+
+        <TextView
+            style="@style/SettingsBody"
+            android:layout_marginTop="4dp"
+            android:text="DirectSync akan dijeda saat membuka Mi Fitness agar koneksi jam dapat digunakan di sana." />
+    </LinearLayout>
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnPauseMiFitness"
+        style="@style/SettingsButton"
+        android:layout_marginTop="12dp"
+        android:text="Jeda &amp; buka Mi Fitness"
+        app:icon="@drawable/ic_pause" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnResumeDirectSync"
+        style="@style/SettingsPrimaryButton"
+        android:layout_marginTop="8dp"
+        android:text="Lanjutkan DirectSync"
+        android:visibility="gone"
+        app:icon="@drawable/ic_bluetooth_connected" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnImportAllMiFitness"
+        style="@style/SettingsButton"
+        android:layout_marginTop="8dp"
+        android:text="Impor semua data Mi Fitness"
+        app:icon="@drawable/ic_cloud_sync" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnManageHealthPermissions"
+        style="@style/SettingsButton"
+        android:layout_marginTop="8dp"
+        android:text="Atur izin Health Connect"
+        app:icon="@drawable/ic_health_and_safety" />
 </LinearLayout>

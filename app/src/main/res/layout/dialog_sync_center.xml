@@ -16,6 +16,6 @@
             android:textColor="@color/on_surface_variant" android:textSize="12sp" />
         <LinearLayout android:id="@+id/layoutSyncMetrics" android:layout_width="match_parent" android:layout_height="wrap_content"
             android:orientation="vertical" android:layout_marginTop="16dp" />
-        <include android:id="@+id/handoff" layout="@layout/item_mi_fitness_handoff" />
+        <include android:id="@+id/handoff" layout="@layout/item_mi_fitness_handoff" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" />
     </LinearLayout>
 </androidx.core.widget.NestedScrollView>

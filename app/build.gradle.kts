@@ -60,6 +60,9 @@ dependencies {
     // OkHttp for F5 Webhook HTTP POST export
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
+    // Native vector maps; OpenFreeMap provides the basemap without an API key.
+    implementation("org.maplibre.gl:android-sdk:12.3.1")
+
     // Unit Testing
     testImplementation("junit:junit:4.13.2")
 }

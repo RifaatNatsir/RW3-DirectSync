@@ -43,8 +43,19 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- For minimal wake-lock during sleep-log packet bursts & webhook sync -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.health.READ_SLEEP" />
+    <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
+    <uses-permission android:name="android.permission.health.READ_STEPS" />
+    <uses-permission android:name="android.permission.health.READ_ACTIVE_CALORIES_BURNED" />
+    <uses-permission android:name="android.permission.health.READ_EXERCISE" />
+    <uses-permission android:name="android.permission.health.READ_DISTANCE" />
+    <uses-permission android:name="android.permission.health.READ_SPEED" />
+    <uses-permission android:name="android.permission.health.READ_ELEVATION_GAINED" />
+    <uses-permission android:name="android.permission.health.READ_OXYGEN_SATURATION" />
+    <uses-permission android:name="android.permission.health.READ_EXERCISE_ROUTES" />
+    <uses-permission android:name="android.permission.health.READ_HEALTH_DATA_HISTORY" />
     <!-- Required on Android 11+ (API 30+) to query installed apps for the notification whitelist filter -->
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"
@@ -78,6 +89,10 @@
             android:label="Koleksi &amp; Wallpaper Jam" />
 
         <activity android:name=".ui.SleepInsightsActivity" android:exported="false" android:label="Tren tidur" />
+
+        <activity android:name=".ui.HeartRateDetailActivity" android:exported="false" android:label="Detail Detak Jantung" />
+
+        <activity android:name=".ui.WorkoutDetailActivity" android:exported="false" android:label="Detail Sesi Olahraga" />
 
         <!-- Dedicated BLE Foreground Service keeping Redmi Watch 3 connection alive -->
         <activity android:name=".ui.HealthDataPrivacyActivity" android:exported="true">

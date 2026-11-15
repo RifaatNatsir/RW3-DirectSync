@@ -2,6 +2,7 @@ package com.rw3.directsync.ui
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.bluetooth.BluetoothManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ComponentName
@@ -10,25 +11,18 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
-import android.graphics.Color
-import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.text.Editable
-import android.text.InputFilter
-import android.text.InputType
 import android.text.TextWatcher
-import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.CheckBox
-import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
-import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -36,46 +30,54 @@ import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.widget.doAfterTextChanged
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.bottomsheet.BottomSheetBehavior
+import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.rw3.directsync.R
 import com.rw3.directsync.ble.BleSyncService
+import com.rw3.directsync.data.MiFitnessHealthConnectImporter
+import com.rw3.directsync.data.SportTypeCatalog
+import com.rw3.directsync.data.db.Rw3Database
 import com.rw3.directsync.data.db.entity.ActivityRecordEntity
 import com.rw3.directsync.data.db.entity.SleepSessionEntity
-import com.rw3.directsync.sync.*
-import com.rw3.directsync.databinding.DialogSyncCenterBinding
-import com.rw3.directsync.databinding.ItemSyncMetricBinding
-import com.rw3.directsync.databinding.ItemMiFitnessHandoffBinding
-import com.google.android.material.bottomsheet.BottomSheetDialog
-import com.google.android.material.bottomsheet.BottomSheetBehavior
-import com.rw3.directsync.data.HealthConnectSleepImporter
 import com.rw3.directsync.databinding.ActivityMainBinding
 import com.rw3.directsync.databinding.DialogAppWhitelistBinding
+import com.rw3.directsync.databinding.DialogCredentialsSettingsBinding
+import com.rw3.directsync.databinding.DialogEditWebhookBinding
+import com.rw3.directsync.databinding.DialogSleepHistoryBinding
+import com.rw3.directsync.databinding.DialogSyncCenterBinding
+import com.rw3.directsync.databinding.ItemMiFitnessHandoffBinding
+import com.rw3.directsync.databinding.ItemSleepHistoryBinding
+import com.rw3.directsync.databinding.ItemSyncMetricBinding
 import com.rw3.directsync.databinding.ItemWhitelistAppBinding
 import com.rw3.directsync.databinding.ItemWorkoutHistoryBinding
-import com.rw3.directsync.databinding.ItemSleepHistoryBinding
-import com.rw3.directsync.databinding.DialogSleepHistoryBinding
 import com.rw3.directsync.notification.Rw3NotificationListenerService
+import com.rw3.directsync.sync.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.text.NumberFormat
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
 /**
  * RW3-DirectSync Dashboard Activity:
- * - Google Stitch dark theme with high-contrast buttons & crisp typography
- * - Dedicated full-screen BLE GATT Terminal tab (no unwanted auto-scrolling on dashboard)
- * - PPG Optical Heart Rate real-time stream & smooth Canvas ECG sparkline
- * - Daily Activity gauges (Steps, Calories) & secondary fitness metrics
- * - Health Checkups (SpO2, Stress, Spot HR) & Workout History cards
- * - Sleep Architecture multi-segment stage visualization
- * - Room SQLite telemetry storage monitoring & Webhook POST pipeline
+ * - FigCraft dark Bento UI & shared Design System tokens
+ * - 4 independent scrollable tabs (Dashboard, Activity, Terminal, Settings) with 240ms crossfade
+ * - Detail screens (HeartRateDetailActivity, SleepInsightsActivity, WorkoutDetailActivity, WatchfaceActivity)
  */
+private typealias SportFilter = SportTypeCatalog.Filter
+
 class MainActivity : AppCompatActivity() {
 
     private enum class NavTab {
@@ -85,11 +87,26 @@ class MainActivity : AppCompatActivity() {
         SETTINGS
     }
 
+    private var currentTab = NavTab.DASHBOARD
+    private var selectedSportFilter = SportFilter.ALL
+    private var allWorkoutsCache: List<ActivityRecordEntity> = emptyList()
+    private var featuredWorkoutId: String? = null
+    private var featuredCurveJob: Job? = null
+
+    private val exportTerminalLogsLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri: android.net.Uri? ->
+        if (uri != null) exportTerminalLogsToUri(uri)
+    }
+
     private val viewModel: MainViewModel by viewModels()
     private lateinit var binding: ActivityMainBinding
 
     private var bleService: BleSyncService? = null
     private var serviceStateJob: Job? = null
+    private var blePickerScanJob: Job? = null
+    private var bleScanInProgress = false
+    private var lastWebhookDispatchAtMs = 0L
     private var pendingActionAfterPermission: (() -> Unit)? = null
     private val syncStatuses by lazy { SyncStatusRepository.get(this) }
     private val connectionMode by lazy { DirectSyncMode.get(this) }
@@ -97,10 +114,19 @@ class MainActivity : AppCompatActivity() {
     private var syncCenterBinding: DialogSyncCenterBinding? = null
     private val syncRows = mutableMapOf<SyncMetric, ItemSyncMetricBinding>()
     private var sleepImportRunning = false
+    private var askedHealthPermissionsOnce = false
     private var sleepHistoryRecords = emptyList<SleepSessionEntity>()
-    private val sleepPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) importSleepHistory() else {
-            binding.tvSleepImportStatus.text = "Izin membaca tidur belum diberikan. Data yang sudah tersimpan tetap tersedia."
+    private val healthPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        val anyGranted = grants.values.any { it } ||
+            (Build.VERSION.SDK_INT >= 34 && MiFitnessHealthConnectImporter.hasAnyReadPermission(this))
+        if (anyGranted) {
+            importMiFitnessHistory()
+        } else {
+            binding.tvSleepImportStatus.visibility = View.VISIBLE
+            binding.tvSleepImportStatus.text =
+                "Izin Health Connect belum aktif. Ketuk 'Atur izin Health Connect' di tab Pengaturan untuk mengaktifkan akses."
         }
     }
 
@@ -162,6 +188,10 @@ class MainActivity : AppCompatActivity() {
                             viewModel.onHrStreamingChanged(streaming)
                         }
                     }
+                    launch { service.phoneFinderRinging.collect { renderDeviceFinder() } }
+                    launch { service.findingWatch.collect { renderDeviceFinder() } }
+                    launch { service.finderStatus.collect { renderDeviceFinder() } }
+                    launch { service.watchfaceUploadReady.collect { renderDeviceFinder() } }
                     launch {
                         service.currentMediaState.collect { media ->
                             updateMediaUi(media)
@@ -179,17 +209,110 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Customize gauge meter colors
-        binding.gaugeDailySteps.progressColor = ContextCompat.getColor(this, R.color.primary_mint)
-        binding.gaugeDailyCalories.progressColor = ContextCompat.getColor(this, R.color.heart_rate_coral)
+        val restoredTab = savedInstanceState?.getString(KEY_CURRENT_TAB)
+            ?.let { name -> runCatching { NavTab.valueOf(name) }.getOrNull() }
+            ?: NavTab.DASHBOARD
+        savedInstanceState?.getString(KEY_SPORT_FILTER)
+            ?.let { name -> runCatching { SportFilter.valueOf(name) }.getOrNull() }
+            ?.let { selectedSportFilter = it }
 
+        setupSystemBarInsets()
+        setupBackNavigation()
         setupListeners()
         observeViewModel()
         updateNotificationUiState()
-        selectTab(NavTab.DASHBOARD)
+        selectTab(restoredTab, animate = false)
+        openFinderFromNotification(intent)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(KEY_CURRENT_TAB, currentTab.name)
+        outState.putString(KEY_SPORT_FILTER, selectedSportFilter.name)
+    }
+
+    private companion object {
+        const val KEY_CURRENT_TAB = "state_current_tab"
+        const val KEY_SPORT_FILTER = "state_sport_filter"
+    }
+
+    private fun setupSystemBarInsets() {
+        val headerBaseTop = binding.mainHeaderBar.paddingTop
+        val navBaseBottom = binding.bottomNavLayout.paddingBottom
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
+            val sysBars = insets.getInsets(
+                androidx.core.view.WindowInsetsCompat.Type.systemBars() or
+                    androidx.core.view.WindowInsetsCompat.Type.displayCutout()
+            )
+            binding.mainHeaderBar.setPadding(
+                binding.mainHeaderBar.paddingLeft,
+                headerBaseTop + sysBars.top,
+                binding.mainHeaderBar.paddingRight,
+                binding.mainHeaderBar.paddingBottom
+            )
+            binding.bottomNavLayout.setPadding(
+                binding.bottomNavLayout.paddingLeft,
+                binding.bottomNavLayout.paddingTop,
+                binding.bottomNavLayout.paddingRight,
+                navBaseBottom + sysBars.bottom
+            )
+            insets
+        }
+        androidx.core.view.ViewCompat.requestApplyInsets(binding.root)
+    }
+
+    private fun setupBackNavigation() {
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (currentTab != NavTab.DASHBOARD) {
+                    selectTab(NavTab.DASHBOARD)
+                } else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        })
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        openFinderFromNotification(intent)
+    }
+
+    private fun openFinderFromNotification(intent: Intent) {
+        if (!intent.getBooleanExtra("open_device_finder", false)) return
+        intent.removeExtra("open_device_finder")
+        selectTab(NavTab.SETTINGS)
+        binding.tabSettingsScroll.post {
+            binding.tabSettingsScroll.smoothScrollTo(0, binding.deviceFinder.root.top)
+        }
+    }
+
+    private fun renderDeviceFinder() {
+        val svc = bleService
+        val paused = connectionMode.paused.value
+        val ready = svc?.watchfaceUploadReady?.value == true && !paused
+        val finding = svc?.findingWatch?.value == true
+        val ringing = svc?.phoneFinderRinging?.value == true
+        val item = binding.deviceFinder
+        item.btnFindWatch.isEnabled = ready || finding
+        item.btnFindWatch.alpha = if (item.btnFindWatch.isEnabled) 1f else 0.55f
+        item.btnFindWatch.text = if (finding) "Hentikan pencarian jam" else "Kirim sinyal ke jam"
+        item.btnFindWatch.setIconResource(if (finding) R.drawable.ic_power else R.drawable.ic_watch)
+        item.tvFinderStatus.text = when {
+            paused -> "DirectSync sedang dijeda untuk Mi Fitness. Pilih Lanjutkan terlebih dahulu."
+            !ready -> "Hubungkan DirectSync ke jam untuk mencari perangkat."
+            finding -> svc?.finderStatus?.value ?: "Mengirim sinyal ke jam…"
+            else -> "Siap mencari jam. Pencarian berhenti otomatis setelah 30 detik."
+        }
+        item.btnStopPhoneFinder.visibility = if (ringing) View.VISIBLE else View.GONE
+        item.tvPhoneFinderStatus.text = if (ringing) "Smartwatch sedang mencari HP ini. Ketuk Hentikan untuk mematikan bunyi dan getaran."
+            else "Untuk mencari HP, buka menu Cari HP di smartwatch. HP berdering dan bergetar hingga 60 detik."
     }
 
     override fun onResume() {
@@ -209,29 +332,32 @@ class MainActivity : AppCompatActivity() {
     private fun updateNotificationUiState() {
         val hasAccess = Rw3NotificationListenerService.isNotificationAccessGranted(this)
         if (hasAccess) {
-            binding.tvNotificationAccessBadge.text = "Akses Aktif"
+            binding.tvNotificationAccessBadge.text = "Izin aktif"
+            binding.tvNotificationAccessBadge.setBackgroundResource(R.drawable.bg_pill_mint)
             binding.tvNotificationAccessBadge.setTextColor(ContextCompat.getColor(this, R.color.primary_mint))
-            binding.btnNotificationPermission.text = "Pengaturan Izin"
-            binding.tvNotificationDescription.text = "Pesan aplikasi (WhatsApp, Telegram, SMS, dll) dan panggilan telepon diteruskan langsung ke layar Redmi Watch 3."
+            binding.btnNotificationPermission.text = "Atur izin"
+            binding.tvNotificationDescription.text = "Pesan aplikasi dan panggilan masuk dapat diteruskan ke jam. Pilih aplikasi yang diizinkan di bawah."
         } else {
-            binding.tvNotificationAccessBadge.text = "Akses Belum Aktif"
+            binding.tvNotificationAccessBadge.text = "Izin belum aktif"
+            binding.tvNotificationAccessBadge.setBackgroundResource(R.drawable.bg_pill_coral)
             binding.tvNotificationAccessBadge.setTextColor(ContextCompat.getColor(this, R.color.heart_rate_coral))
-            binding.btnNotificationPermission.text = "Aktifkan Izin"
-            binding.tvNotificationDescription.text = "Akses Notifikasi Android belum diberikan. Ketuk 'Aktifkan Izin' agar jam tangan dapat menerima notifikasi HP."
+            binding.btnNotificationPermission.text = "Aktifkan izin"
+            binding.tvNotificationDescription.text = "Aktifkan akses notifikasi Android agar jam dapat menerima pesan dan panggilan dari HP."
         }
 
         val isWhitelistMode = Rw3NotificationListenerService.isWhitelistModeEnabled(this)
         val whitelistedCount = Rw3NotificationListenerService.getWhitelistedPackages(this).size
         if (isWhitelistMode) {
-            binding.tvWhitelistSummary.text = "Whitelist Aktif: $whitelistedCount aplikasi diizinkan"
+            binding.tvWhitelistSummary.text = "$whitelistedCount aplikasi diizinkan"
             binding.tvWhitelistSummary.setTextColor(ContextCompat.getColor(this, R.color.primary_mint))
         } else {
-            binding.tvWhitelistSummary.text = "Semua Aplikasi Diizinkan (Whitelist Mati)"
+            binding.tvWhitelistSummary.text = "Semua aplikasi diizinkan"
             binding.tvWhitelistSummary.setTextColor(ContextCompat.getColor(this, R.color.on_surface_variant))
         }
     }
 
     override fun onDestroy() {
+        blePickerScanJob?.cancel()
         syncCenterDialog?.dismiss()
         super.onDestroy()
     }
@@ -252,80 +378,140 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupListeners() {
-        binding.btnOpenSyncCenter.setOnClickListener { showSyncCenter() }
-        setupHandoff(binding.miFitnessHandoff)
-        binding.btnViewSleepHistory.setOnClickListener { showAllSleepHistory() }
-        binding.btnSleepInsights.setOnClickListener {
-            startActivity(Intent(this, SleepInsightsActivity::class.java))
+        // Header actions
+        binding.btnHeaderProfile.setOnClickListener { selectTab(NavTab.SETTINGS) }
+        binding.btnQuickWatchface.setOnClickListener {
+            UiTransitions.startDetailActivity(this, Intent(this, WatchfaceActivity::class.java))
         }
-        binding.btnImportSleepHistory.setOnClickListener {
-            binding.tvSleepImportStatus.visibility = View.VISIBLE
-            if (Build.VERSION.SDK_INT < 34) {
-                binding.tvSleepImportStatus.text = "Impor Mi Fitness tersedia pada Android 14 atau lebih baru. Sinkronisasi langsung dari jam tetap tersedia."
-            } else if (ContextCompat.checkSelfPermission(this, HealthConnectSleepImporter.READ_SLEEP) == PackageManager.PERMISSION_GRANTED) {
-                importSleepHistory()
-            } else sleepPermissionLauncher.launch(HealthConnectSleepImporter.READ_SLEEP)
-        }
-        binding.btnDashboardConnect.setOnClickListener {
-            ensurePermissionsAndRun { validateAndStartBleService() }
-        }
-        binding.btnHr24h.setOnClickListener { viewModel.heartRateWindowHours.value = 24 }
-        binding.btnHr7d.setOnClickListener { viewModel.heartRateWindowHours.value = 168 }
-        // Copy MAC Address
-        binding.btnCopyMac.setOnClickListener {
-            copyTextToClipboard("RW3-MAC", binding.tvMacAddressDisplay.text.toString())
-            Toast.makeText(this, "MAC Address disalin ke clipboard", Toast.LENGTH_SHORT).show()
-        }
-
-        // Tap MAC bar or Profile button to edit credentials
-        binding.tvMacAddressDisplay.setOnClickListener {
-            showCredentialsSettingsDialog()
-        }
-        binding.btnHeaderProfile.setOnClickListener {
-            showCredentialsSettingsDialog()
-        }
-
-        // Fast Connection Action Buttons
-        binding.btnConnectMain.setOnClickListener {
-            ensurePermissionsAndRun { validateAndStartBleService() }
-        }
-
-        binding.btnScanBlePicker.setOnClickListener {
-            ensurePermissionsAndRun { startScanAndShowPicker() }
-        }
-
-        binding.btnDisconnectMain.setOnClickListener {
-            stopBleService()
-        }
-
-        // PPG Sensor Trigger
-        binding.btnToggleHeartRate.setOnClickListener {
-            triggerStartHeartRate()
-        }
-
-        // Card 1B: Smart Notifications
-        binding.btnNotificationPermission.setOnClickListener {
-            Rw3NotificationListenerService.openNotificationAccessSettings(this)
-        }
-
-        binding.btnTestNotification.setOnClickListener {
-            val isConnected = (bleService?.syncState?.value is BleSyncService.SyncState.Authenticated)
-            if (isConnected) {
-                val intent = Intent(this, BleSyncService::class.java).apply {
-                    action = BleSyncService.ACTION_SEND_TEST_NOTIFICATION
-                }
-                startService(intent)
-                Toast.makeText(this, "Notifikasi tes dikirim ke Redmi Watch 3!", Toast.LENGTH_SHORT).show()
+        binding.btnHeaderActivitySync.setOnClickListener {
+            if (bleService?.watchfaceUploadReady?.value == true && !connectionMode.paused.value) {
+                triggerSyncAll()
             } else {
-                Toast.makeText(this, "Hubungkan jam terlebih dahulu via tombol 'Hubungkan'.", Toast.LENGTH_LONG).show()
+                ensurePermissionsAndRun { validateAndStartBleService() }
             }
         }
 
-        binding.btnFilterApps.setOnClickListener {
-            showAppWhitelistDialog()
+        // Dashboard Hero & Bento cards
+        binding.btnDashboardConnect.setOnClickListener {
+            ensurePermissionsAndRun { validateAndStartBleService() }
+        }
+        binding.btnSyncAll.setOnClickListener { triggerSyncAll() }
+        binding.cardHeartRateStream.setOnClickListener {
+            UiTransitions.startDetailActivity(this, Intent(this, HeartRateDetailActivity::class.java))
+        }
+        binding.btnToggleHeartRate.setOnClickListener { triggerStartHeartRate() }
+        binding.cardSleepArchitecture.setOnClickListener {
+            UiTransitions.startDetailActivity(this, Intent(this, SleepInsightsActivity::class.java))
+        }
+        binding.btnSleepInsights.setOnClickListener {
+            UiTransitions.startDetailActivity(this, Intent(this, SleepInsightsActivity::class.java))
+        }
+        binding.btnViewSleepHistory.setOnClickListener { showAllSleepHistory() }
+        binding.btnImportSleepHistory.setOnClickListener {
+            triggerMiFitnessImport(interactive = true)
+        }
+        binding.cardRecentWorkoutDash.setOnClickListener {
+            val latest = allWorkoutsCache.firstOrNull()
+            if (latest != null) {
+                openWorkoutDetail(latest.id)
+            } else {
+                selectTab(NavTab.ACTIVITY)
+            }
         }
 
-        // Card 1C: Two-Way Media & Music Controls
+        // Activity Tab · Sport Filter Icon Tiles & Featured Session
+        binding.tileSportAll.setOnClickListener { setSportFilter(SportFilter.ALL) }
+        binding.tileSportRun.setOnClickListener { setSportFilter(SportFilter.RUN) }
+        binding.tileSportWalk.setOnClickListener { setSportFilter(SportFilter.WALK) }
+        binding.tileSportBike.setOnClickListener { setSportFilter(SportFilter.BIKE) }
+        binding.tileSportGym.setOnClickListener { setSportFilter(SportFilter.GYM) }
+        binding.cardFeaturedWorkout.setOnClickListener {
+            featuredWorkoutId?.let { openWorkoutDetail(it) }
+        }
+        updateSportFilterUi()
+
+        // Terminal & Sync Tab
+        binding.btnTerminalSyncDetail.setOnClickListener { showSyncCenter() }
+        binding.btnTerminalSyncAll.setOnClickListener {
+            if (bleService?.watchfaceUploadReady?.value == true && !connectionMode.paused.value) {
+                triggerSyncAll()
+            } else {
+                ensurePermissionsAndRun { validateAndStartBleService() }
+            }
+        }
+        listOf(
+            binding.rowSyncHr to SyncMetric.HEART_RATE,
+            binding.rowSyncActivity to SyncMetric.STEPS,
+            binding.rowSyncSleep to SyncMetric.SLEEP,
+            binding.rowSyncWorkout to SyncMetric.WORKOUTS
+        ).forEach { (row, metric) ->
+            row.setOnClickListener {
+                val entry = syncStatuses.entries.value.getValue(metric)
+                if (entry.failures.isNotEmpty() || bleService?.watchfaceUploadReady?.value == true) {
+                    showSyncCenter()
+                } else {
+                    showSyncCenter()
+                }
+            }
+        }
+        binding.btnTerminalHandoffBanner.setOnClickListener {
+            selectTab(NavTab.SETTINGS)
+            binding.tabSettingsScroll.post {
+                binding.tabSettingsScroll.smoothScrollTo(0, binding.miFitnessHandoff.root.top)
+            }
+        }
+        binding.btnCopyTerminalLogs.setOnClickListener { copyLogsToClipboard() }
+        binding.btnClearTerminalLogs.setOnClickListener {
+            bleService?.clearDiagnosticLogs()
+            viewModel.clearDiagnosticLogs()
+            binding.tvTerminalLogOutput.text = "Logs cleared. Menunggu event baru..."
+            binding.tvTerminalLogCount.text = "0 baris"
+        }
+        binding.btnCmdPingSpp.setOnClickListener {
+            val svc = bleService
+            if (svc != null && svc.watchfaceUploadReady.value && !connectionMode.paused.value) {
+                triggerSyncAll()
+            } else {
+                Toast.makeText(this, "Hubungkan jam untuk mengirim perintah ping/sinkronisasi.", Toast.LENGTH_SHORT).show()
+            }
+        }
+        binding.btnCmdBatteryInfo.setOnClickListener {
+            val bat = viewModel.batteryLevel.value
+            val msg = if (bat != null) "Baterai jam terakhir terbaca: $bat%" else "Level baterai belum diterima dari jam."
+            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+        }
+        binding.btnCmdExportLogs.setOnClickListener {
+            val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date())
+            exportTerminalLogsLauncher.launch("rw3_ble_logs_$stamp.txt")
+        }
+
+        // Settings & Atur Jam Tab
+        setupHandoff(binding.miFitnessHandoff)
+        binding.deviceFinder.btnFindWatch.setOnClickListener {
+            val svc = bleService
+            val error = svc?.findWatch(svc.findingWatch.value.not()) ?: if (svc == null) "Hubungkan jam terlebih dahulu." else null
+            if (error != null) Toast.makeText(this, error, Toast.LENGTH_LONG).show()
+        }
+        binding.deviceFinder.btnStopPhoneFinder.setOnClickListener { bleService?.stopPhoneFinder() }
+        binding.btnCopyMac.setOnClickListener {
+            val mac = viewModel.macAddress.value.trim()
+            if (mac.isEmpty()) {
+                Toast.makeText(this, "MAC Address belum diatur.", Toast.LENGTH_SHORT).show()
+            } else {
+                copyTextToClipboard("RW3-MAC", mac)
+                Toast.makeText(this, "MAC Address disalin ke clipboard", Toast.LENGTH_SHORT).show()
+            }
+        }
+        binding.tvMacAddressDisplay.setOnClickListener { showCredentialsSettingsDialog() }
+        binding.btnEditConnection.setOnClickListener { showCredentialsSettingsDialog() }
+        binding.btnConnectMain.setOnClickListener {
+            ensurePermissionsAndRun { validateAndStartBleService() }
+        }
+        binding.btnScanBlePicker.setOnClickListener {
+            ensurePermissionsAndRun { startScanAndShowPicker() }
+        }
+        binding.btnDisconnectMain.setOnClickListener { stopBleService() }
+
         binding.btnMediaPlayPause.setOnClickListener {
             bleService?.let { svc ->
                 if (svc.currentMediaState.value.isPlaying) {
@@ -335,174 +521,181 @@ class MainActivity : AppCompatActivity() {
                 }
             } ?: Toast.makeText(this, "Hubungkan jam tangan atau putar musik di HP terlebih dahulu.", Toast.LENGTH_SHORT).show()
         }
-
         binding.btnMediaNext.setOnClickListener {
             bleService?.sendMediaNext() ?: Toast.makeText(this, "Hubungkan jam tangan atau putar musik di HP terlebih dahulu.", Toast.LENGTH_SHORT).show()
         }
-
         binding.btnMediaPrev.setOnClickListener {
             bleService?.sendMediaPrevious() ?: Toast.makeText(this, "Hubungkan jam tangan atau putar musik di HP terlebih dahulu.", Toast.LENGTH_SHORT).show()
         }
 
-        // Card Watchface & Wallpaper
         binding.cardWatchfaceWallpaper.setOnClickListener {
-            startActivity(Intent(this, WatchfaceActivity::class.java))
+            UiTransitions.startDetailActivity(this, Intent(this, WatchfaceActivity::class.java))
         }
         binding.btnOpenWatchfaceManager.setOnClickListener {
-            startActivity(Intent(this, WatchfaceActivity::class.java))
+            UiTransitions.startDetailActivity(this, Intent(this, WatchfaceActivity::class.java))
+        }
+        binding.rowSettingsMenuNotif.setOnClickListener {
+            binding.tabSettingsScroll.smoothScrollTo(0, binding.cardSmartNotifications.top)
+        }
+        binding.rowSettingsMenuFinder.setOnClickListener {
+            binding.tabSettingsScroll.smoothScrollTo(0, binding.deviceFinder.root.top)
+        }
+        binding.rowSettingsMenuWebhook.setOnClickListener {
+            binding.tabSettingsScroll.smoothScrollTo(0, binding.cardTelemetryPipeline.top)
         }
 
-        // Card 7: Sync Semua Data (Sleep, Workouts, Activities, Battery)
-        binding.btnSyncAll.setOnClickListener {
-            triggerSyncAll()
+        binding.btnNotificationPermission.setOnClickListener {
+            Rw3NotificationListenerService.openNotificationAccessSettings(this)
         }
+        binding.btnTestNotification.setOnClickListener {
+            when {
+                connectionMode.paused.value -> Toast.makeText(
+                    this,
+                    "DirectSync sedang dijeda untuk Mi Fitness. Pilih Lanjutkan terlebih dahulu.",
+                    Toast.LENGTH_LONG
+                ).show()
+                bleService?.syncState?.value is BleSyncService.SyncState.Authenticated ||
+                    bleService?.watchfaceUploadReady?.value == true -> {
+                    val intent = Intent(this, BleSyncService::class.java).apply {
+                        action = BleSyncService.ACTION_SEND_TEST_NOTIFICATION
+                    }
+                    startService(intent)
+                    Toast.makeText(this, "Notifikasi tes dikirim ke Redmi Watch 3!", Toast.LENGTH_SHORT).show()
+                }
+                else -> Toast.makeText(
+                    this,
+                    "Hubungkan jam terlebih dahulu via tombol 'Hubungkan'.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+        binding.btnFilterApps.setOnClickListener { showAppWhitelistDialog() }
 
-        // Webhook Pipeline
-        binding.boxWebhookEndpoint.setOnClickListener {
-            showEditWebhookDialog()
-        }
+        binding.boxWebhookEndpoint.setOnClickListener { showEditWebhookDialog() }
+        binding.btnPushWebhookMain.setOnClickListener { triggerWebhookExport() }
 
-        binding.btnPushWebhookMain.setOnClickListener {
-            triggerWebhookExport()
-        }
-
-        // Terminal Controls
-        binding.btnCopyTerminalLogs.setOnClickListener {
-            copyLogsToClipboard()
-        }
-
-        binding.btnClearTerminalLogs.setOnClickListener {
-            bleService?.clearDiagnosticLogs()
-            viewModel.clearDiagnosticLogs()
-            binding.tvTerminalLogOutput.text = "Logs cleared. Menunggu event baru..."
-        }
-
-        // Bottom Navigation Tabs
-        binding.navTabDash.setOnClickListener {
-            selectTab(NavTab.DASHBOARD)
-        }
-
-        binding.navTabActivity.setOnClickListener {
-            selectTab(NavTab.ACTIVITY)
-        }
-
-        binding.navTabTerminal.setOnClickListener {
-            selectTab(NavTab.TERMINAL)
-        }
-
-        binding.navTabSettings.setOnClickListener {
-            selectTab(NavTab.SETTINGS)
-        }
+        // Bottom Navigation Tabs (Minimalist icon dock)
+        binding.navTabDash.setOnClickListener { selectTab(NavTab.DASHBOARD) }
+        binding.navTabActivity.setOnClickListener { selectTab(NavTab.ACTIVITY) }
+        binding.navTabTerminal.setOnClickListener { selectTab(NavTab.TERMINAL) }
+        binding.navTabSettings.setOnClickListener { selectTab(NavTab.SETTINGS) }
     }
 
-    private fun selectTab(tab: NavTab) {
+    private fun selectTab(tab: NavTab, animate: Boolean = true) {
+        currentTab = tab
         val mint = ContextCompat.getColor(this, R.color.primary_mint)
         val muted = ContextCompat.getColor(this, R.color.on_surface_variant)
 
-        val settings = tab == NavTab.SETTINGS
-        binding.layoutDashboardContainer.requestFocus()
-        binding.layoutOverviewHeading.visibility = if (tab == NavTab.DASHBOARD) View.VISIBLE else View.GONE
-        binding.btnOpenSyncCenter.visibility = if (tab == NavTab.DASHBOARD) View.VISIBLE else View.GONE
-        binding.miFitnessHandoff.root.visibility = if (settings) View.VISIBLE else View.GONE
-        listOf(binding.cardDeviceIdentity, binding.cardSmartNotifications,
-            binding.cardMediaAndAutoReconnect, binding.cardWatchfaceWallpaper, binding.cardTelemetryPipeline).forEach {
-            it.visibility = if (settings) View.VISIBLE else View.GONE
+        val allTabs = listOf(
+            binding.tabDashboardScroll,
+            binding.tabActivityScroll,
+            binding.layoutTerminalContainer,
+            binding.tabSettingsScroll
+        )
+        val targetView = when (tab) {
+            NavTab.DASHBOARD -> binding.tabDashboardScroll
+            NavTab.ACTIVITY -> binding.tabActivityScroll
+            NavTab.TERMINAL -> binding.layoutTerminalContainer
+            NavTab.SETTINGS -> binding.tabSettingsScroll
         }
-        binding.cardHeartRateStream.visibility = if (tab == NavTab.DASHBOARD) View.VISIBLE else View.GONE
-        binding.cardSleepArchitecture.visibility = if (tab == NavTab.DASHBOARD) View.VISIBLE else View.GONE
-        binding.cardSleepHistory.visibility = if (tab == NavTab.DASHBOARD) View.VISIBLE else View.GONE
-        listOf(binding.cardDailyActivity, binding.cardHealthCheckups, binding.cardWorkoutHistory).forEach {
-            it.visibility = if (settings) View.GONE else View.VISIBLE
+
+        if (animate && targetView.visibility != View.VISIBLE) {
+            UiTransitions.crossfadeTo(targetView, allTabs)
+        } else {
+            allTabs.forEach { view ->
+                view.animate().cancel()
+                view.alpha = 1f
+                view.visibility = if (view === targetView) View.VISIBLE else View.GONE
+            }
         }
-        binding.imgNavSettings.imageTintList = ColorStateList.valueOf(if (settings) mint else muted)
-        binding.tvNavSettings.setTextColor(if (settings) mint else muted)
 
         when (tab) {
-            NavTab.SETTINGS -> {
-                binding.layoutDashboardContainer.visibility = View.VISIBLE
-                binding.layoutTerminalContainer.visibility = View.GONE
-                binding.tvHeaderAppTitle.text = "Pengaturan"
-                listOf(binding.imgNavDash, binding.imgNavActivity, binding.imgNavTerminal).forEach {
-                    it.imageTintList = ColorStateList.valueOf(muted)
-                }
-                listOf(binding.tvNavDash, binding.tvNavActivity, binding.tvNavTerminal).forEach { it.setTextColor(muted) }
-                binding.layoutDashboardContainer.post { binding.layoutDashboardContainer.scrollTo(0, 0) }
-            }
             NavTab.DASHBOARD -> {
-                binding.layoutDashboardContainer.visibility = View.VISIBLE
-                binding.layoutTerminalContainer.visibility = View.GONE
-                binding.tvHeaderAppTitle.text = "Dashboard"
-
-                binding.imgNavDash.imageTintList = ColorStateList.valueOf(mint)
-                binding.tvNavDash.setTextColor(mint)
-
-                binding.imgNavActivity.imageTintList = ColorStateList.valueOf(muted)
-                binding.tvNavActivity.setTextColor(muted)
-
-                binding.imgNavTerminal.imageTintList = ColorStateList.valueOf(muted)
-                binding.tvNavTerminal.setTextColor(muted)
-
-                binding.layoutDashboardContainer.post { binding.layoutDashboardContainer.scrollTo(0, 0) }
+                binding.tvHeaderAppTitle.text = "RW3 DirectSync"
+                binding.headerDashActions.visibility = View.VISIBLE
+                binding.btnHeaderActivitySync.visibility = View.GONE
+                binding.badgeHeaderLiveRx.visibility = View.GONE
+                binding.badgeHeaderFw.visibility = View.GONE
             }
             NavTab.ACTIVITY -> {
-                binding.layoutDashboardContainer.visibility = View.VISIBLE
-                binding.layoutTerminalContainer.visibility = View.GONE
-                binding.tvHeaderAppTitle.text = "Aktivitas"
-
-                binding.imgNavDash.imageTintList = ColorStateList.valueOf(muted)
-                binding.tvNavDash.setTextColor(muted)
-
-                binding.imgNavActivity.imageTintList = ColorStateList.valueOf(mint)
-                binding.tvNavActivity.setTextColor(mint)
-
-                binding.imgNavTerminal.imageTintList = ColorStateList.valueOf(muted)
-                binding.tvNavTerminal.setTextColor(muted)
-
-                binding.layoutDashboardContainer.post {
-                    binding.layoutDashboardContainer.smoothScrollTo(0, binding.cardDailyActivity.top)
-                }
+                binding.tvHeaderAppTitle.text = "Aktivitas Olahraga"
+                binding.headerDashActions.visibility = View.GONE
+                binding.btnHeaderActivitySync.visibility = View.VISIBLE
+                binding.badgeHeaderLiveRx.visibility = View.GONE
+                binding.badgeHeaderFw.visibility = View.GONE
             }
             NavTab.TERMINAL -> {
-                binding.layoutDashboardContainer.visibility = View.GONE
-                binding.layoutTerminalContainer.visibility = View.VISIBLE
-                binding.tvHeaderAppTitle.text = "BLE Terminal"
-
-                binding.imgNavDash.imageTintList = ColorStateList.valueOf(muted)
-                binding.tvNavDash.setTextColor(muted)
-
-                binding.imgNavActivity.imageTintList = ColorStateList.valueOf(muted)
-                binding.tvNavActivity.setTextColor(muted)
-
-                binding.imgNavTerminal.imageTintList = ColorStateList.valueOf(mint)
-                binding.tvNavTerminal.setTextColor(mint)
-
+                binding.tvHeaderAppTitle.text = "Terminal"
+                binding.headerDashActions.visibility = View.GONE
+                binding.btnHeaderActivitySync.visibility = View.GONE
+                binding.badgeHeaderLiveRx.visibility = View.VISIBLE
+                binding.badgeHeaderFw.visibility = View.VISIBLE
+                renderSyncCenter()
                 if (binding.switchAutoScroll.isChecked) {
                     binding.terminalScrollView.post {
                         binding.terminalScrollView.scrollTo(0, binding.tvTerminalLogOutput.bottom)
                     }
                 }
             }
+            NavTab.SETTINGS -> {
+                binding.tvHeaderAppTitle.text = "Atur Jam"
+                binding.headerDashActions.visibility = View.VISIBLE
+                binding.btnHeaderActivitySync.visibility = View.GONE
+                binding.badgeHeaderLiveRx.visibility = View.GONE
+                binding.badgeHeaderFw.visibility = View.GONE
+                renderDeviceFinder()
+                updateGroupedMenuSubtitles()
+            }
         }
+
+        fun styleNav(selected: Boolean, pill: View, icon: android.widget.ImageView, ind: View) {
+            pill.setBackgroundResource(if (selected) R.drawable.bg_nav_active_pill else 0)
+            icon.imageTintList = ColorStateList.valueOf(if (selected) mint else muted)
+            ind.visibility = if (selected) View.VISIBLE else View.INVISIBLE
+        }
+
+        styleNav(tab == NavTab.DASHBOARD, binding.pillNavDash, binding.imgNavDash, binding.indNavDash)
+        styleNav(tab == NavTab.ACTIVITY, binding.pillNavActivity, binding.imgNavActivity, binding.indNavActivity)
+        styleNav(tab == NavTab.TERMINAL, binding.pillNavTerminal, binding.imgNavTerminal, binding.indNavTerminal)
+        styleNav(tab == NavTab.SETTINGS, binding.pillNavSettings, binding.imgNavSettings, binding.indNavSettings)
     }
 
     @SuppressLint("SetTextI18n")
     private fun observeViewModel() {
+        var latestSpo2Pct: Int? = null
+        var latestStressScore: Int? = null
+        fun updateSpo2StressLabel() {
+            val spo2Text = latestSpo2Pct?.let { "$it%" } ?: "—"
+            val stressText = latestStressScore?.let { "$it" } ?: "—"
+            binding.tvSpo2StressCombined.text = "$spo2Text · $stressText"
+        }
+
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch { syncStatuses.entries.collect { renderSyncCenter() } }
                 launch { viewModel.syncMetricEvidence.collect { renderSyncCenter() } }
                 launch { connectionMode.paused.collect { updateUiForSyncState(viewModel.syncState.value) } }
+
                 // 1. MAC Address
                 launch {
                     viewModel.macAddress.collect { mac ->
-                        binding.tvMacAddressDisplay.text = mac
+                        binding.tvMacAddressDisplay.text = mac.ifBlank { "Belum diatur" }
+                        binding.btnCopyMac.isEnabled = mac.isNotBlank()
+                        binding.btnCopyMac.alpha = if (mac.isNotBlank()) 1f else 0.4f
                     }
                 }
 
                 // 2. Webhook URL
                 launch {
                     viewModel.webhookUrl.collect { url ->
-                        binding.tvWebhookUrlPreview.text = url
+                        val hasUrl = url.isNotBlank()
+                        binding.tvWebhookUrlPreview.text = if (hasUrl) url else "Belum diatur · ketuk untuk menambah URL"
+                        binding.tvWebhookUrlPreview.setTextColor(
+                            ContextCompat.getColor(
+                                this@MainActivity,
+                                if (hasUrl) R.color.secondary_cyan else R.color.on_surface_muted
+                            )
+                        )
                     }
                 }
 
@@ -510,66 +703,41 @@ class MainActivity : AppCompatActivity() {
                 launch {
                     viewModel.batteryLevel.collect { battery ->
                         val batteryStr = if (battery != null && battery > 0) "$battery%" else "--%"
-                        binding.tvHeaderBattery.text = " $batteryStr"
-                        binding.tvDeviceBattery.text = " $batteryStr"
+                        binding.tvHeaderBattery.text = batteryStr
+                        binding.tvDeviceBattery.text = batteryStr
                     }
                 }
 
-                // Use persisted timestamps; cached live state must not create new chart points.
+                // 4. Dashboard Hero Heart Rate & Compact Sparkline
                 launch {
                     viewModel.latestHeartRate.collect { record ->
                         binding.tvLiveBpmValue.text = record?.bpm?.toString() ?: "—"
-                        binding.tvHrLastUpdate.text = record?.let { "Terakhir · ${metricTime(it.timestamp)}" } ?: "Belum ada pengukuran"
+                        if (record != null) {
+                            binding.tvHeroSyncTimeBadge.text = metricTime(record.timestamp)
+                        }
                     }
                 }
-                launch {
-                    viewModel.heartRateWindowHours.collect { hours ->
-                        binding.sparklineWaveView.setWindowHours(hours)
-                        binding.tvHrChartPeriod.text = "${if (hours == 24) "24 jam · rata-rata 5 menit" else "7 hari · rata-rata 30 menit"}\nSentuh grafik untuk nilai sampel asli"
-                        binding.btnHr24h.setTextColor(ContextCompat.getColor(this@MainActivity, if (hours == 24) R.color.primary_mint else R.color.on_surface_variant))
-                        binding.btnHr7d.setTextColor(ContextCompat.getColor(this@MainActivity, if (hours == 168) R.color.primary_mint else R.color.on_surface_variant))
-                    }
-                }
-
-                // 4b. 24-Hour Heart Rate Timeline & Stats
                 launch {
                     viewModel.heartRate24hRecords.collect { records ->
-                        binding.sparklineWaveView.setHeartRateRecords(records)
+                        binding.miniHrSparkline.setAccentColor(
+                            ContextCompat.getColor(this@MainActivity, R.color.heart_rate_coral)
+                        )
+                        binding.miniHrSparkline.setRecords(records)
                     }
                 }
-
                 launch {
                     viewModel.heartRate24hStats.collect { stats ->
-                        if (stats.count > 0 && stats.avgBpm != null) {
-                            binding.tvHrMinValue.text = stats.minBpm?.toString() ?: "—"
-                            binding.tvHrAvgValue.text = stats.avgBpm?.toString() ?: "—"
-                            binding.tvHrMaxValue.text = stats.maxBpm?.toString() ?: "—"
-                            binding.tvHr24hStats.text = "${numberFormat.format(stats.count)} sampel dalam periode ini"
+                        val avgBpm = stats.avgBpm
+                        binding.tvHr24hStats.text = if (stats.count > 0 && avgBpm != null) {
+                            "Min ${stats.minBpm ?: "—"} · $avgBpm · Maks ${stats.maxBpm ?: "—"}"
                         } else {
-                            binding.tvHrMinValue.text = "—"
-                            binding.tvHrAvgValue.text = "—"
-                            binding.tvHrMaxValue.text = "—"
-                            binding.tvHr24hStats.text = "Belum ada sampel dalam periode ini"
+                            "Belum ada sampel"
                         }
                     }
                 }
-
-                // 4b. On-Demand Eco HR Streaming Toggle State
                 launch {
                     viewModel.isHrStreaming.collect { streaming ->
-                        if (streaming) {
-                            binding.btnToggleHeartRate.text = "Hentikan Stream"
-                            binding.tvHrStreamBadge.text = "● Eco Stream (15s)"
-                            binding.tvHrStreamBadge.setTextColor(
-                                ContextCompat.getColor(this@MainActivity, R.color.heart_rate_coral)
-                            )
-                        } else {
-                            binding.btnToggleHeartRate.text = "Mulai Ukur HR"
-                            binding.tvHrStreamBadge.text = "○ Sensor Hemat Daya"
-                            binding.tvHrStreamBadge.setTextColor(
-                                ContextCompat.getColor(this@MainActivity, R.color.primary_mint)
-                            )
-                        }
+                        binding.btnToggleHeartRate.text = if (streaming) "Hentikan" else "Ukur Sekarang"
                     }
                 }
 
@@ -577,9 +745,9 @@ class MainActivity : AppCompatActivity() {
                 launch {
                     viewModel.storedRecordsCount.collect { count ->
                         binding.tvStoredRecordsCount.text = numberFormat.format(count)
+                        updateGroupedMenuSubtitles()
                     }
                 }
-
                 launch {
                     viewModel.unsyncedRecordsCount.collect { count ->
                         binding.tvUnsyncedQueueCount.text = numberFormat.format(count)
@@ -593,9 +761,10 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                // 7. Diagnostic Terminal Logs (Auto-scroll without focus request)
+                // 7. Diagnostic Terminal Logs
                 launch {
                     viewModel.diagnosticLogs.collect { logs ->
+                        binding.tvTerminalLogCount.text = "${logs.size} baris"
                         if (logs.isNotEmpty()) {
                             binding.tvTerminalLogOutput.text = logs.joinToString("\n")
                             if (binding.layoutTerminalContainer.visibility == View.VISIBLE && binding.switchAutoScroll.isChecked) {
@@ -607,134 +776,389 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                // 8. Card 3: Aktivitas Harian (Langkah, Kalori, HR Istirahat, Stand Hours)
+                // 8. Daily Activity (Steps, Calories, Resting HR, Standing Hours, Progress Bars)
                 launch {
                     viewModel.dailyActivity.collect { record ->
                         if (record != null) {
                             val steps = record.steps ?: 0
                             val cals = record.calories ?: 0
+                            binding.tvDailyStepsPercent.text = record.steps?.let {
+                                "Langkah · ${(it * 100 / 8000).coerceIn(0, 999)}%"
+                            } ?: "Langkah · --%"
+                            binding.tvDailyCaloriesPercent.text = record.calories?.let {
+                                "Kalori · ${(it * 100 / 500).coerceIn(0, 999)}%"
+                            } ?: "Kalori · --%"
                             binding.tvDailyStepsValue.text = record.steps?.let { numberFormat.format(it) } ?: "—"
                             binding.tvDailyCaloriesValue.text = record.calories?.let { numberFormat.format(it) } ?: "—"
-                            binding.tvDailyActivityDate.text = java.text.SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(java.util.Date(record.timestamp))
+                            binding.tvDailyActivityDate.text = SimpleDateFormat("dd MMM yyyy", Locale("id", "ID"))
+                                .format(Date(record.timestamp))
                             binding.tvRestingHrValue.text = record.restingHeartRate?.let { "$it BPM" } ?: "—"
                             binding.tvStandHoursValue.text = record.standingHours?.let { "$it jam" } ?: "—"
-                            binding.tvHrRangeValue.text = "${record.averageHeartRate ?: "—"} / ${record.minHeartRate ?: "—"} / ${record.maxHeartRate ?: "—"}"
-
-                            val stepsPct = ((steps.toFloat() / 6000f) * 100f).coerceIn(0f, 100f)
-                            val calsPct = ((cals.toFloat() / 300f) * 100f).coerceIn(0f, 100f)
-
-                            binding.tvDailyStepsPercent.text = if (record.steps != null) "${stepsPct.toInt()}% tercapai" else "Belum ada data"
-                            binding.tvDailyCaloriesPercent.text = if (record.calories != null) "${calsPct.toInt()}% tercapai" else "Belum ada data"
-
-                            binding.gaugeDailySteps.progress = stepsPct
-                            binding.gaugeDailyCalories.progress = calsPct
-
+                            updateProgressBar(binding.trackStepsProgress, binding.barStepsProgress, steps / 8000f)
+                            updateProgressBar(binding.trackCaloriesProgress, binding.barCaloriesProgress, cals / 500f)
                         } else {
-                            binding.gaugeDailySteps.progress = 0f
-                            binding.gaugeDailyCalories.progress = 0f
+                            binding.tvDailyStepsPercent.text = "Langkah · --%"
+                            binding.tvDailyCaloriesPercent.text = "Kalori · --%"
+                            binding.tvDailyStepsValue.text = "—"
+                            binding.tvDailyCaloriesValue.text = "—"
                             binding.tvDailyActivityDate.text = "Belum ada data"
+                            binding.tvRestingHrValue.text = "—"
+                            binding.tvStandHoursValue.text = "—"
+                            updateProgressBar(binding.trackStepsProgress, binding.barStepsProgress, 0f)
+                            updateProgressBar(binding.trackCaloriesProgress, binding.barCaloriesProgress, 0f)
                         }
                     }
                 }
 
-                // 9. Card 4: Pengukuran Kesehatan (SpO2, Stres, HR Spot)
+                // 9. SpO2 & Stress combined badge on Dashboard Activity card
                 launch {
                     viewModel.latestSpo2.collect { record ->
-                        if (record != null && record.spo2 != null) {
-                            binding.tvSpo2Value.text = "${record.spo2}%"
-                        }
+                        latestSpo2Pct = record?.spo2
+                        updateSpo2StressLabel()
                     }
                 }
-
                 launch {
                     viewModel.latestStress.collect { record ->
-                        if (record != null && record.stress != null) {
-                            binding.tvStressValue.text = "${record.stress}/100"
-                        }
+                        latestStressScore = record?.stress
+                        updateSpo2StressLabel()
                     }
                 }
 
-                launch {
-                    viewModel.latestManualHr.collect { record ->
-                        if (record != null && record.averageHeartRate != null) {
-                            binding.tvSpotHrValue.text = "${record.averageHeartRate} BPM"
-                        }
-                    }
-                }
-
-                // 10. Card 5: Riwayat Olahraga
+                // 10. Workouts -> Dashboard Recent Card + Activity Tab (Filter, Weekly Summary, Featured, History)
                 launch {
                     viewModel.workouts.collect { records ->
-                        binding.layoutWorkoutHistoryList.removeAllViews()
-                        binding.tvWorkoutSummary.text = if (records.isEmpty()) "Belum ada sesi tersimpan" else "${records.size} sesi tersimpan · terbaru lebih dulu"
-                        if (records.isNotEmpty()) {
-                            records.forEach { record ->
-                                addWorkoutRowView(record)
-                            }
+                        allWorkoutsCache = records
+                        val latest = records.firstOrNull()
+                        if (latest != null) {
+                            binding.tvRecentWorkoutTitle.text = SportTypeCatalog.displayName(latest.sportType)
+                            val dur = formatWorkoutDurationShort(latest)
+                            val dist = formatWorkoutDistanceShort(latest)
+                            val cal = latest.calories?.let { "${numberFormat.format(it)} kcal" } ?: "—"
+                            val metricSeg = if (dist != null) "$dist · $dur" else dur
+                            binding.tvRecentWorkoutSub.text = "$metricSeg · $cal · ${metricTime(latest.timestamp)}"
                         } else {
-                            binding.layoutWorkoutHistoryList.addView(TextView(this@MainActivity).apply {
-                                text = "Belum ada sesi olahraga. Sinkronkan riwayat dari jam."
-                                textSize = 14f
-                                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.on_surface_variant))
-                            })
+                            binding.tvRecentWorkoutTitle.text = "Belum ada sesi"
+                            binding.tvRecentWorkoutSub.text = "Sinkronkan olahraga dari jam"
                         }
+                        renderActivityTabWorkouts(records)
                     }
                 }
 
-                // 11. Card 6: Arsitektur Tidur Summary
+                // 11. Sleep Bento Card Summary & History Cache
                 launch {
                     viewModel.sleepSummary.collect { summary ->
                         updateSleepSummaryUi(summary)
                     }
                 }
-                launch { viewModel.sleepHistory.collect { updateSleepHistoryUi(it) } }
+                launch {
+                    viewModel.sleepHistory.collect { records ->
+                        updateSleepHistoryUi(records)
+                    }
+                }
             }
         }
     }
 
+    private fun updateProgressBar(track: View, bar: View, fraction: Float) {
+        val clamped = fraction.coerceIn(0f, 1f)
+        track.post {
+            val totalWidth = track.width
+            if (totalWidth <= 0) return@post
+            val lp = bar.layoutParams
+            lp.width = if (clamped <= 0f) {
+                0
+            } else {
+                (totalWidth * clamped).toInt().coerceAtLeast((6 * resources.displayMetrics.density).toInt())
+            }
+            bar.layoutParams = lp
+        }
+    }
+
+    private fun setSportFilter(filter: SportFilter) {
+        selectedSportFilter = filter
+        updateSportFilterUi()
+        renderActivityTabWorkouts(allWorkoutsCache)
+    }
+
+    private fun updateSportFilterUi() {
+        val mint = ContextCompat.getColor(this, R.color.primary_mint)
+        val muted = ContextCompat.getColor(this, R.color.on_surface_variant)
+        val ringDrawable = ContextCompat.getDrawable(this, R.drawable.bg_sport_tile_selected_ring)
+        val entries = listOf(
+            Triple(SportFilter.ALL, binding.tileSportAll, Pair(binding.iconBoxSportAll, binding.labelSportAll)),
+            Triple(SportFilter.RUN, binding.tileSportRun, Pair(binding.iconBoxSportRun, binding.labelSportRun)),
+            Triple(SportFilter.WALK, binding.tileSportWalk, Pair(binding.iconBoxSportWalk, binding.labelSportWalk)),
+            Triple(SportFilter.BIKE, binding.tileSportBike, Pair(binding.iconBoxSportBike, binding.labelSportBike)),
+            Triple(SportFilter.GYM, binding.tileSportGym, Pair(binding.iconBoxSportGym, binding.labelSportGym))
+        )
+        entries.forEach { (filter, tile, pair) ->
+            val selected = filter == selectedSportFilter
+            val (iconBox, label) = pair
+            tile.alpha = if (selected) 1f else 0.78f
+            iconBox.foreground = if (selected) ringDrawable else null
+            label.setTextColor(if (selected) mint else muted)
+        }
+    }
+
+    private fun matchesSportFilter(sportType: Int?, filter: SportFilter): Boolean =
+        SportTypeCatalog.matchesFilter(sportType, filter)
+
+    @SuppressLint("SetTextI18n")
+    private fun renderActivityTabWorkouts(allRecords: List<ActivityRecordEntity>) {
+        // Weekly KPI summary across the past 7 days
+        val zone = java.time.ZoneId.systemDefault()
+        val today = java.time.LocalDate.now(zone)
+        val weekStart = today.minusDays(6)
+        val fmtShort = java.time.format.DateTimeFormatter.ofPattern("dd MMM", Locale("id", "ID"))
+        binding.tvActivityWeeklyDate.text = "${weekStart.format(fmtShort)} – ${today.format(fmtShort)}"
+
+        val weekRecords = allRecords.filter { rec ->
+            val date = java.time.Instant.ofEpochMilli(rec.timestamp).atZone(zone).toLocalDate()
+            date in weekStart..today
+        }
+        val totalSec = weekRecords.sumOf { resolveDurationSeconds(it) }
+        val totalCal = weekRecords.sumOf { it.calories ?: 0 }
+        val totalMin = totalSec / 60
+        binding.tvWeeklySessionsCount.text = weekRecords.size.toString()
+        binding.tvWeeklyActiveDuration.text = if (totalMin >= 60) "${totalMin / 60}j ${totalMin % 60}m" else "${totalMin}m"
+        binding.tvWeeklyCalories.text = numberFormat.format(totalCal)
+
+        val filtered = allRecords.filter { matchesSportFilter(it.sportType, selectedSportFilter) }
+        val featured = filtered.firstOrNull()
+        if (featured != null) {
+            featuredWorkoutId = featured.id
+            binding.cardFeaturedWorkout.visibility = View.VISIBLE
+            binding.tvFeaturedWorkoutTitle.text = SportTypeCatalog.displayName(featured.sportType)
+            val dateClock = SimpleDateFormat("dd MMM · HH:mm", Locale("id", "ID")).format(Date(featured.timestamp))
+            val featDist = formatWorkoutDistanceShort(featured)
+            binding.tvFeaturedWorkoutSub.text = if (featDist != null) "$dateClock · $featDist" else dateClock
+            binding.tvFeaturedWorkoutBadge.text = featured.averageHeartRate?.let { "♥ $it BPM" } ?: "Ketuk Detail"
+            val durSec = resolveDurationSeconds(featured)
+            binding.tvFeatDuration.text = if (durSec > 0) formatHmsShort(durSec) else "—"
+            binding.tvFeatHrAvg.text = featured.averageHeartRate?.let { "$it BPM" } ?: "—"
+            binding.tvFeatHrMax.text = featured.maxHeartRate?.let { "$it BPM" } ?: "—"
+            binding.tvFeatCalories.text = featured.calories?.let { "${numberFormat.format(it)} kcal" } ?: "—"
+            loadFeaturedWorkoutCurve(featured)
+        } else {
+            featuredWorkoutId = null
+            featuredCurveJob?.cancel()
+            binding.cardFeaturedWorkout.visibility = View.GONE
+            binding.featuredWorkoutSparkline.setRecords(emptyList())
+        }
+
+        binding.layoutWorkoutHistoryList.removeAllViews()
+        binding.tvWorkoutSummary.text = if (filtered.isEmpty()) {
+            "Tidak ada sesi untuk filter ini"
+        } else {
+            "${filtered.size} sesi ditampilkan · ketuk untuk detail"
+        }
+        if (filtered.isNotEmpty()) {
+            filtered.forEach { record -> addWorkoutRowView(record) }
+        } else {
+            binding.layoutWorkoutHistoryList.addView(TextView(this@MainActivity).apply {
+                text = if (allRecords.isEmpty()) {
+                    "Belum ada sesi olahraga. Sinkronkan riwayat dari jam."
+                } else {
+                    "Belum ada sesi pada kategori olahraga ini."
+                }
+                textSize = 13f
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.on_surface_variant))
+            })
+        }
+    }
+
+    @SuppressLint("SetTextI18n")
+    private fun loadFeaturedWorkoutCurve(record: ActivityRecordEntity) {
+        featuredCurveJob?.cancel()
+        val endTs = record.endTimestamp ?: (record.timestamp + (record.activeSeconds ?: 0) * 1000L)
+        if (endTs <= record.timestamp) {
+            binding.featuredWorkoutSparkline.setRecords(emptyList())
+            binding.tvFeaturedCurveNote.text = "Ketuk kartu ini untuk melihat detail sesi olahraga."
+            return
+        }
+        binding.tvFeaturedCurveNote.text = "Memuat kurva detak jantung sesi…"
+        featuredCurveJob = lifecycleScope.launch {
+            val samples = withContext(Dispatchers.IO) {
+                Rw3Database.getDatabase(applicationContext)
+                    .heartRateDao()
+                    .getRecordsBetween(record.timestamp, endTs)
+            }
+            binding.featuredWorkoutSparkline.setAccentColor(
+                ContextCompat.getColor(this@MainActivity, R.color.heart_rate_coral)
+            )
+            binding.featuredWorkoutSparkline.setRecords(samples)
+            binding.tvFeaturedCurveNote.text = if (samples.size >= 2) {
+                "${samples.size} sampel HR terekam selama sesi · Ketuk untuk detail"
+            } else {
+                "Sampel HR detail tidak terekam saat sesi ini · Ketuk untuk rincian"
+            }
+        }
+    }
+
+    private fun openWorkoutDetail(workoutId: String) {
+        UiTransitions.startDetailActivity(
+            this,
+            Intent(this, WorkoutDetailActivity::class.java)
+                .putExtra(WorkoutDetailActivity.EXTRA_WORKOUT_ID, workoutId)
+        )
+    }
+
+    private fun resolveDurationSeconds(record: ActivityRecordEntity): Int {
+        val direct = record.activeSeconds ?: 0
+        if (direct > 0) return direct
+        val end = record.endTimestamp ?: return 0
+        return ((end - record.timestamp) / 1000L).toInt().coerceAtLeast(0)
+    }
+
+    private fun formatHmsShort(seconds: Int): String {
+        val h = seconds / 3600
+        val m = (seconds % 3600) / 60
+        val s = seconds % 60
+        return if (h > 0) String.format(Locale.US, "%d:%02d:%02d", h, m, s)
+        else String.format(Locale.US, "%d:%02d", m, s)
+    }
+
+    private fun formatWorkoutDurationShort(record: ActivityRecordEntity): String {
+        val sec = resolveDurationSeconds(record)
+        return if (sec > 0) formatHmsShort(sec) else "Durasi —"
+    }
+
+    @SuppressLint("SetTextI18n")
     private fun addWorkoutRowView(record: ActivityRecordEntity) {
         val item = ItemWorkoutHistoryBinding.inflate(layoutInflater, binding.layoutWorkoutHistoryList, false)
-        item.workoutTitle.text = sportName(record.sportType)
-        item.workoutDate.text = java.text.SimpleDateFormat("EEEE, dd MMM yyyy", Locale("id", "ID"))
-            .format(java.util.Date(record.timestamp))
-        val clock = java.text.SimpleDateFormat("HH:mm", Locale.getDefault())
-        val start = clock.format(java.util.Date(record.timestamp))
-        val end = record.endTimestamp?.let { clock.format(java.util.Date(it)) }
-        item.workoutPeriod.text = if (end != null) "$start – $end · Selesai" else "Mulai $start"
-        item.workoutDuration.text = record.activeSeconds?.let { seconds ->
-            val hours = seconds / 3600
-            val minutes = seconds % 3600 / 60
-            if (hours > 0) String.format(Locale.getDefault(), "%d:%02d:%02d", hours, minutes, seconds % 60)
-            else String.format(Locale.getDefault(), "%d:%02d", minutes, seconds % 60)
-        } ?: "—"
-        item.workoutDurationLabel.text = if ((record.activeSeconds ?: 0) >= 3600) "Durasi · jam:mnt:dtk" else "Durasi · mnt:dtk"
-        item.workoutCalories.text = record.calories?.let { numberFormat.format(it) } ?: "—"
-        item.workoutHrMin.text = record.minHeartRate?.toString() ?: "—"
-        item.workoutHrAverage.text = record.averageHeartRate?.toString() ?: "—"
-        item.workoutHrMax.text = record.maxHeartRate?.toString() ?: "—"
-        item.workoutIcon.setImageResource(when (record.sportType) {
-            1 -> R.drawable.ic_directions_run
-            2, 15 -> R.drawable.ic_nordic_walking
-            6, 7 -> R.drawable.ic_pedal_bike
-            else -> R.drawable.ic_fitness_center
-        })
+        item.workoutTitle.text = SportTypeCatalog.displayName(record.sportType)
+        item.workoutDate.text = SimpleDateFormat("dd MMM yyyy", Locale("id", "ID"))
+            .format(Date(record.timestamp))
+        val clock = SimpleDateFormat("HH:mm", Locale.getDefault())
+        val start = clock.format(Date(record.timestamp))
+        val dur = formatWorkoutDurationShort(record)
+        val dist = formatWorkoutDistanceShort(record)
+        val avgHr = record.averageHeartRate?.let { if (dist != null) " · ♥ $it" else " · ♥ $it BPM" } ?: ""
+        item.workoutPeriod.text = if (dist != null) "$start · $dist · $dur$avgHr" else "$start · $dur$avgHr"
+        item.workoutCalories.text = record.calories?.let { "${numberFormat.format(it)} kcal" } ?: "—"
+        item.workoutIcon.setImageResource(SportTypeCatalog.iconRes(record.sportType))
+        item.root.setOnClickListener { openWorkoutDetail(record.id) }
         binding.layoutWorkoutHistoryList.addView(item.root)
     }
 
-    private fun importSleepHistory() {
+    private fun updateGroupedMenuSubtitles() {
+        val notifOk = Rw3NotificationListenerService.isNotificationAccessGranted(this)
+        val wlCount = Rw3NotificationListenerService.getWhitelistedPackages(this).size
+        val wlMode = Rw3NotificationListenerService.isWhitelistModeEnabled(this)
+        binding.tvGroupedNotifSub.text = when {
+            !notifOk -> "Izin akses notifikasi belum aktif"
+            wlMode -> "Aktif · $wlCount aplikasi diizinkan"
+            else -> "Aktif · Semua aplikasi diteruskan"
+        }
+        val stored = viewModel.storedRecordsCount.value
+        val unsynced = viewModel.unsyncedRecordsCount.value
+        binding.tvGroupedStorageSub.text = "${numberFormat.format(stored)} rekaman · ${numberFormat.format(unsynced)} antrean"
+    }
+
+    private fun exportTerminalLogsToUri(uri: android.net.Uri) {
+        val snapshot = viewModel.diagnosticLogs.value.toList()
+        if (snapshot.isEmpty()) {
+            Toast.makeText(this, "Belum ada log terminal untuk diekspor.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                contentResolver.openOutputStream(uri)?.use { out ->
+                    out.write(snapshot.joinToString("\n").toByteArray(Charsets.UTF_8))
+                }
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@MainActivity, "${snapshot.size} baris log diekspor.", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@MainActivity, "Gagal mengekspor log: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    private fun formatWorkoutDistanceShort(record: ActivityRecordEntity): String? {
+        val m = record.distanceMeters?.takeIf { it >= 10.0 } ?: return null
+        val km = m / 1000.0
+        val txt = if (km >= 10.0) String.format(Locale.US, "%.1f", km) else String.format(Locale.US, "%.2f", km).trimEnd('0').trimEnd('.')
+        return "$txt km"
+    }
+
+    private fun triggerMiFitnessImport(interactive: Boolean) {
+        if (!MiFitnessHealthConnectImporter.isAvailable(this)) {
+            if (interactive) {
+                binding.tvSleepImportStatus.visibility = View.VISIBLE
+                binding.tvSleepImportStatus.text =
+                    "Impor Mi Fitness membutuhkan Android 14 atau lebih baru. Sinkronisasi langsung dari jam tetap tersedia."
+            }
+            return
+        }
+        val supported = MiFitnessHealthConnectImporter.supportedPermissions(this)
+        val missing = MiFitnessHealthConnectImporter.missingPermissions(this)
+        if (interactive && missing.isNotEmpty() && !askedHealthPermissionsOnce) {
+            askedHealthPermissionsOnce = true
+            binding.tvSleepImportStatus.visibility = View.VISIBLE
+            binding.tvSleepImportStatus.text = "Meminta izin akses data Mi Fitness melalui Health Connect…"
+            healthPermissionLauncher.launch(supported.toTypedArray())
+        } else if (MiFitnessHealthConnectImporter.hasAnyReadPermission(this)) {
+            importMiFitnessHistory()
+        } else if (interactive) {
+            healthPermissionLauncher.launch(supported.toTypedArray())
+        }
+    }
+
+    private fun openHealthConnectPermissions() {
+        if (!MiFitnessHealthConnectImporter.isAvailable(this)) {
+            Toast.makeText(this, "Health Connect bawaan sistem tersedia di Android 14+.", Toast.LENGTH_LONG).show()
+            return
+        }
+        runCatching {
+            startActivity(MiFitnessHealthConnectImporter.managePermissionsIntent(this))
+        }.recoverCatching {
+            startActivity(MiFitnessHealthConnectImporter.healthHomeSettingsIntent())
+            Toast.makeText(
+                this,
+                "Pilih 'RW3-DirectSync' di Health Connect untuk mengatur seluruh izin termasuk Rute olahraga.",
+                Toast.LENGTH_LONG
+            ).show()
+        }.onFailure {
+            Toast.makeText(this, "Buka Pengaturan > Health Connect untuk mengatur izin aplikasi.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun importMiFitnessHistory() {
         if (Build.VERSION.SDK_INT < 34 || sleepImportRunning) return
         sleepImportRunning = true
         renderSyncCenter()
         binding.btnImportSleepHistory.isEnabled = false
         binding.tvSleepImportStatus.visibility = View.VISIBLE
-        binding.tvSleepImportStatus.text = "Mengambil riwayat tidur Mi Fitness…"
+        binding.tvSleepImportStatus.text = "Mengimpor seluruh riwayat Mi Fitness dari Health Connect…"
         lifecycleScope.launch {
             try {
-                val count = HealthConnectSleepImporter(this@MainActivity).importHistory()
-                binding.tvSleepImportStatus.text = if (count > 0) "$count sesi Mi Fitness dibaca. Riwayat tersimpan di HP."
-                else "Belum ada tidur Mi Fitness di Health Connect. Sinkronkan tidur di Mi Fitness, lalu coba kembali."
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (e: Exception) {
+                val summary = MiFitnessHealthConnectImporter(this@MainActivity).importAll()
+                val parts = buildList {
+                    if (summary.workouts > 0) add("${summary.workouts} olahraga")
+                    if (summary.sleepSessions > 0) add("${summary.sleepSessions} tidur")
+                    if (summary.dailyDays > 0) add("${summary.dailyDays} hari aktivitas")
+                    if (summary.heartRateSamples > 0) add("${numberFormat.format(summary.heartRateSamples)} sampel HR")
+                    if (summary.spo2Records > 0) add("${summary.spo2Records} SpO₂")
+                }
+                val missing = MiFitnessHealthConnectImporter.missingPermissions(this@MainActivity)
+                binding.tvSleepImportStatus.text = if (parts.isNotEmpty()) {
+                    val hint = when {
+                        summary.routesPendingPermission > 0 ->
+                            " (${summary.routesPendingPermission} sesi memiliki rute GPS — aktifkan 'Rute olahraga' via Atur izin Health Connect)"
+                        missing.isNotEmpty() ->
+                            " Ketuk 'Atur izin Health Connect' bila ada kategori yang belum diizinkan."
+                        else -> ""
+                    }
+                    "Diimpor dari Mi Fitness: ${parts.joinToString(" · ")}.$hint"
+                } else {
+                    "Belum ada data Mi Fitness di Health Connect (${summary.grantedTypes} izin aktif). Sinkronkan Mi Fitness dahulu lalu coba kembali."
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
                 syncStatuses.importFailed(e.message ?: "Periksa izin Health Connect.")
                 binding.tvSleepImportStatus.text = "Riwayat belum dapat dibaca: ${e.message ?: "periksa izin Health Connect"}"
             } finally {
@@ -745,23 +1169,24 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun formatSleepMinutes(minutes: Int): String =
-        if (minutes >= 60) "${minutes / 60}j ${minutes % 60}m" else "${minutes}m"
-
     private fun bindSleepRow(item: ItemSleepHistoryBinding, session: SleepSessionEntity) {
-        item.sleepDate.text = java.text.SimpleDateFormat("EEE, dd MMM", Locale("id", "ID"))
-            .format(java.util.Date(session.endTimestamp))
-        val clock = java.text.SimpleDateFormat("HH:mm", Locale.getDefault())
-        item.sleepTime.text = "${clock.format(java.util.Date(session.startTimestamp))} – ${clock.format(java.util.Date(session.endTimestamp))}"
+        item.sleepDate.text = SimpleDateFormat("EEE, dd MMM", Locale("id", "ID"))
+            .format(Date(session.endTimestamp))
+        val clock = SimpleDateFormat("HH:mm", Locale.getDefault())
+        item.sleepTime.text = "${clock.format(Date(session.startTimestamp))} – ${clock.format(Date(session.endTimestamp))}"
         item.sleepDuration.text = formatSleepMinutes(session.totalMinutes)
-        item.sleepPhaseBar.setPhases(session.deepMinutes.takeIf { session.hasStageData },
-            session.lightMinutes.takeIf { session.hasStageData }, session.remMinutes.takeIf { session.hasStageData })
+        item.sleepPhaseBar.setPhases(
+            session.deepMinutes.takeIf { session.hasStageData },
+            session.lightMinutes.takeIf { session.hasStageData },
+            session.remMinutes.takeIf { session.hasStageData }
+        )
         item.sleepPhaseCaption.text = if (session.hasStageData)
             "Deep ${session.deepMinutes}m · Light ${session.lightMinutes}m · REM ${session.remMinutes}m"
         else "Rincian fase belum tersedia"
         item.root.setOnClickListener { showSleepDetails(session) }
     }
 
+    @SuppressLint("SetTextI18n")
     private fun updateSleepHistoryUi(records: List<SleepSessionEntity>) {
         sleepHistoryRecords = records
         val zone = java.time.ZoneId.systemDefault()
@@ -788,14 +1213,15 @@ class MainActivity : AppCompatActivity() {
         val records = sleepHistoryRecords.toList()
         if (records.isEmpty()) return
         val content = DialogSleepHistoryBinding.inflate(layoutInflater)
-        val dialog = com.google.android.material.bottomsheet.BottomSheetDialog(this)
+        val dialog = BottomSheetDialog(this)
         val pageSize = 7
         var page = 0
         val pages = (records.size + pageSize - 1) / pageSize
         var visible = records.take(pageSize)
         val adapter = object : RecyclerView.Adapter<SleepHistoryHolder>() {
             override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) = SleepHistoryHolder(
-                ItemSleepHistoryBinding.inflate(layoutInflater, parent, false))
+                ItemSleepHistoryBinding.inflate(layoutInflater, parent, false)
+            )
             override fun getItemCount() = visible.size
             override fun onBindViewHolder(holder: SleepHistoryHolder, position: Int) = bindSleepRow(holder.item, visible[position])
         }
@@ -816,8 +1242,7 @@ class MainActivity : AppCompatActivity() {
         dialog.setOnShowListener {
             dialog.findViewById<FrameLayout>(com.google.android.material.R.id.design_bottom_sheet)?.let { sheet ->
                 sheet.layoutParams.height = (resources.displayMetrics.heightPixels * 0.82f).toInt()
-                com.google.android.material.bottomsheet.BottomSheetBehavior.from(sheet).state =
-                    com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED
+                BottomSheetBehavior.from(sheet).state = BottomSheetBehavior.STATE_EXPANDED
             }
         }
         renderPage()
@@ -825,41 +1250,35 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showSleepDetails(session: SleepSessionEntity) {
-        startActivity(Intent(this, SleepInsightsActivity::class.java)
-            .putExtra(SleepInsightsActivity.EXTRA_SESSION_START, session.startTimestamp))
+        UiTransitions.startDetailActivity(
+            this,
+            Intent(this, SleepInsightsActivity::class.java)
+                .putExtra(SleepInsightsActivity.EXTRA_SESSION_START, session.startTimestamp)
+        )
     }
+
+    private fun formatSleepMinutes(minutes: Int): String =
+        if (minutes >= 60) "${minutes / 60}j ${minutes % 60}m" else "${minutes}m"
 
     private fun metricTime(timestamp: Long): String =
-        java.text.SimpleDateFormat("dd MMM HH:mm", Locale.getDefault()).format(java.util.Date(timestamp))
-
-    private fun sportName(type: Int?): String = when (type) {
-        1 -> "Lari Luar Ruang"
-        2, 15 -> "Jalan Kaki"
-        6 -> "Bersepeda Luar"
-        7 -> "Sepeda Statis"
-        8 -> "Latihan Bebas"
-        12 -> "Yoga"
-        16 -> "HIIT"
-        305 -> "Pilates"
-        308 -> "Latihan Kekuatan"
-        608 -> "Bulu Tangkis"
-        else -> type?.let { "Olahraga #$it" } ?: "Olahraga"
-    }
+        SimpleDateFormat("dd MMM HH:mm", Locale.getDefault()).format(Date(timestamp))
 
     @SuppressLint("SetTextI18n")
     private fun updateSleepSummaryUi(summary: MainViewModel.SleepSummary) {
+        val clockFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
+        val dayFmt = SimpleDateFormat("dd MMM", Locale("id", "ID"))
         binding.tvTotalSleepValue.text = if (summary.hasData) formatSleepMinutes(summary.totalMinutes) else "—"
         binding.tvSleepPeriod.text = if (summary.hasData)
-            "${metricTime(summary.startTimestamp)} – ${metricTime(summary.endTimestamp)}" else "Belum ada sesi tidur tersimpan"
+            "${clockFmt.format(Date(summary.startTimestamp))}–${clockFmt.format(Date(summary.endTimestamp))} · ${dayFmt.format(Date(summary.endTimestamp))}" else "Belum ada sesi"
         binding.tvSleepSource.text = if (summary.sourceFileId.startsWith("healthconnect:")) "Mi Fitness" else "Jam"
         binding.sleepPhaseBar.setPhases(summary.deepMinutes.takeIf { summary.hasData && summary.hasStageData },
             summary.lightMinutes.takeIf { summary.hasData && summary.hasStageData },
             summary.remMinutes.takeIf { summary.hasData && summary.hasStageData })
-        binding.tvLegendSleepDeep.text = "● Deep\n${if (summary.hasStageData) formatSleepMinutes(summary.deepMinutes) else "—"}"
-        binding.tvLegendSleepLight.text = "● Light\n${if (summary.hasStageData) formatSleepMinutes(summary.lightMinutes) else "—"}"
-        binding.tvLegendSleepRem.text = "● REM\n${if (summary.hasStageData) formatSleepMinutes(summary.remMinutes) else "—"}"
-        binding.tvSleepPhaseStatus.text = if (summary.hasStageData) "Proporsi fase selama tidur"
-            else "Rincian Deep, Light, dan REM belum tersedia untuk sesi ini."
+        binding.tvSleepLegendCompact.text = if (summary.hasStageData) {
+            "Dlm ${formatSleepMinutes(summary.deepMinutes)} · Rgn ${formatSleepMinutes(summary.lightMinutes)} · REM ${formatSleepMinutes(summary.remMinutes)}"
+        } else {
+            "Fase belum tersedia"
+        }
         binding.tvTotalSleepValue.contentDescription = "Total tidur ${summary.totalMinutes / 60} jam ${summary.totalMinutes % 60} menit"
     }
 
@@ -869,81 +1288,105 @@ class MainActivity : AppCompatActivity() {
         val cyanColor = ContextCompat.getColor(this, R.color.secondary_cyan)
         val coralColor = ContextCompat.getColor(this, R.color.heart_rate_coral)
         val mutedColor = ContextCompat.getColor(this, R.color.on_surface_variant)
-        val connected = state is BleSyncService.SyncState.Authenticated ||
+        val paused = connectionMode.paused.value
+        val connected = !paused && (state is BleSyncService.SyncState.Authenticated ||
             state is BleSyncService.SyncState.StreamingHeartRate || state is BleSyncService.SyncState.SyncingSleep ||
-            state is BleSyncService.SyncState.SleepSyncCompleted || state is BleSyncService.SyncState.WebhookDispatched
+            state is BleSyncService.SyncState.SleepSyncCompleted || state is BleSyncService.SyncState.WebhookDispatched)
+
+        binding.btnDashboardConnect.visibility = if (connected) View.GONE else View.VISIBLE
+        binding.btnSyncAll.visibility = if (connected) View.VISIBLE else View.GONE
         binding.btnSyncAll.isEnabled = connected && state !is BleSyncService.SyncState.SyncingSleep
-        binding.btnSyncAll.alpha = if (binding.btnSyncAll.isEnabled) 1f else 0.5f
-        binding.btnSyncAll.text = if (state is BleSyncService.SyncState.SyncingSleep) "Mengambil riwayat…" else "Sinkronkan riwayat"
+        binding.btnSyncAll.alpha = if (binding.btnSyncAll.isEnabled) 1f else 0.6f
+        binding.btnSyncAll.text = if (state is BleSyncService.SyncState.SyncingSleep) "Mengambil…" else "Sinkronkan"
         binding.btnToggleHeartRate.isEnabled = connected
-        binding.btnToggleHeartRate.alpha = if (connected) 1f else 0.5f
-        binding.btnDashboardConnect.text = if (connected) "Jam terhubung" else "Hubungkan jam"
-        binding.btnDashboardConnect.isEnabled = !connected
+        binding.btnToggleHeartRate.alpha = if (connected) 1f else 0.55f
+        binding.btnDashboardConnect.text = if (paused) "Lanjutkan DirectSync" else "Hubungkan jam"
+        binding.btnDashboardConnect.isEnabled = !connected || paused
 
         when (state) {
             is BleSyncService.SyncState.Idle -> {
                 binding.tvHeaderGattStatus.text = " Belum terhubung"
                 binding.tvHeaderGattStatus.setTextColor(mutedColor)
                 binding.imgHeaderGattDot.setImageResource(R.drawable.dot_pulse_coral)
-                binding.tvDeviceStatusTag.text = "○ Idle"
+                binding.tvDeviceStatusTag.text = "Belum terhubung"
                 binding.tvDeviceStatusTag.setTextColor(mutedColor)
+                binding.tvHeroSyncSubtitle.text = "Redmi Watch 3 siap dihubungkan via DirectSync"
+                binding.badgeHeaderLiveRx.text = "IDLE"
+                binding.badgeHeaderLiveRx.setTextColor(mutedColor)
             }
 
             is BleSyncService.SyncState.Connecting -> {
                 binding.tvHeaderGattStatus.text = " Menghubungkan…"
                 binding.tvHeaderGattStatus.setTextColor(cyanColor)
                 binding.imgHeaderGattDot.setImageResource(R.drawable.dot_pulse_green)
-                binding.tvDeviceStatusTag.text = "⏳ Connecting..."
+                binding.tvDeviceStatusTag.text = "Menghubungkan…"
                 binding.tvDeviceStatusTag.setTextColor(cyanColor)
+                binding.tvHeroSyncSubtitle.text = "Mencari & membuka GATT Redmi Watch 3…"
+                binding.badgeHeaderLiveRx.text = "CONN"
+                binding.badgeHeaderLiveRx.setTextColor(cyanColor)
             }
 
             is BleSyncService.SyncState.DiscoveringServices -> {
                 binding.tvHeaderGattStatus.text = " Menyiapkan koneksi…"
                 binding.tvHeaderGattStatus.setTextColor(cyanColor)
-                binding.tvDeviceStatusTag.text = "⚡ Discovering"
+                binding.tvDeviceStatusTag.text = "Menyiapkan koneksi…"
                 binding.tvDeviceStatusTag.setTextColor(cyanColor)
+                binding.tvHeroSyncSubtitle.text = "Menyiapkan layanan BLE & GATT…"
             }
 
             is BleSyncService.SyncState.Authenticating -> {
                 binding.tvHeaderGattStatus.text = " Memverifikasi jam…"
                 binding.tvHeaderGattStatus.setTextColor(cyanColor)
-                binding.tvDeviceStatusTag.text = "🔑 Authenticating"
+                binding.tvDeviceStatusTag.text = "Memverifikasi jam…"
                 binding.tvDeviceStatusTag.setTextColor(cyanColor)
+                binding.tvHeroSyncSubtitle.text = "Autentikasi sesi terenkripsi…"
             }
 
             is BleSyncService.SyncState.Authenticated -> {
                 binding.tvHeaderGattStatus.text = " Terhubung"
                 binding.tvHeaderGattStatus.setTextColor(mintColor)
                 binding.imgHeaderGattDot.setImageResource(R.drawable.dot_pulse_green)
-                binding.tvDeviceStatusTag.text = " Tersambung"
+                binding.tvDeviceStatusTag.text = "Terhubung"
                 binding.tvDeviceStatusTag.setTextColor(mintColor)
-                binding.tvAutoReconnectStatus.text = "Tersambung (Eco Mode aktif • Siap auto-reconnect)"
+                binding.tvAutoReconnectStatus.text = "Siap menyambung kembali jika koneksi terputus."
+                binding.tvHeroSyncSubtitle.text = "DirectSync aktif · Siap menyinkronkan data jam"
+                binding.badgeHeaderLiveRx.text = "LIVE RX"
+                binding.badgeHeaderLiveRx.setTextColor(mintColor)
             }
 
             is BleSyncService.SyncState.StreamingHeartRate -> {
                 binding.tvHeaderGattStatus.text = " HR: ${state.latestBpm} BPM"
                 binding.tvHeaderGattStatus.setTextColor(coralColor)
                 binding.imgHeaderGattDot.setImageResource(R.drawable.dot_pulse_green)
-                binding.tvDeviceStatusTag.text = " Tersambung"
+                binding.tvDeviceStatusTag.text = "Terhubung"
                 binding.tvDeviceStatusTag.setTextColor(mintColor)
+                binding.tvHeroSyncSubtitle.text = "Eco HR aktif · ${state.latestBpm} BPM terbaca"
+                binding.badgeHeaderLiveRx.text = "HR ${state.latestBpm}"
+                binding.badgeHeaderLiveRx.setTextColor(coralColor)
             }
 
             is BleSyncService.SyncState.SyncingSleep -> {
                 binding.tvHeaderGattStatus.text = " Mengambil riwayat…"
                 binding.tvHeaderGattStatus.setTextColor(cyanColor)
-                binding.tvDeviceStatusTag.text = "🌙 Syncing (${state.bytesBuffered} B)"
+                binding.tvDeviceStatusTag.text = "Mengambil riwayat…"
                 binding.tvDeviceStatusTag.setTextColor(cyanColor)
+                binding.tvHeroSyncSubtitle.text = "Menarik data aktivitas, tidur, HR & olahraga…"
+                binding.badgeHeaderLiveRx.text = "SYNC"
+                binding.badgeHeaderLiveRx.setTextColor(cyanColor)
             }
 
             is BleSyncService.SyncState.SleepSyncCompleted -> {
                 binding.tvHeaderGattStatus.text = " Terhubung"
-                binding.tvDeviceStatusTag.text = "✓ Sleep Saved (${state.stagesSaved})"
+                binding.tvDeviceStatusTag.text = "Riwayat tersimpan"
                 binding.tvDeviceStatusTag.setTextColor(mintColor)
+                binding.tvHeroSyncSubtitle.text = "Riwayat tersimpan di HP · DirectSync aktif"
+                binding.badgeHeaderLiveRx.text = "LIVE RX"
+                binding.badgeHeaderLiveRx.setTextColor(mintColor)
                 Toast.makeText(this, "Berhasil menyimpan ${state.stagesSaved} stage tidur ke SQLite!", Toast.LENGTH_SHORT).show()
             }
 
             is BleSyncService.SyncState.WebhookDispatched -> {
-                binding.tvDeviceStatusTag.text = "✓ Dispatched"
+                binding.tvDeviceStatusTag.text = "Ekspor selesai"
                 binding.tvDeviceStatusTag.setTextColor(mintColor)
                 binding.tvWebhookLastAck.text = "● Push Berhasil (${state.hrCount} HR, ${state.sleepCount} Sleep, ${state.activityCount} aktivitas)"
                 binding.tvWebhookLastAck.setTextColor(mintColor)
@@ -953,53 +1396,91 @@ class MainActivity : AppCompatActivity() {
                 binding.tvHeaderGattStatus.text = " Terputus"
                 binding.tvHeaderGattStatus.setTextColor(coralColor)
                 binding.imgHeaderGattDot.setImageResource(R.drawable.dot_pulse_coral)
-                binding.tvDeviceStatusTag.text = "✕ Terputus"
+                binding.tvDeviceStatusTag.text = "Terputus"
                 binding.tvDeviceStatusTag.setTextColor(coralColor)
-                binding.tvAutoReconnectStatus.text = if (state.willReconnect) "Auto-Reconnect: ${state.reason}" else "Terputus: ${state.reason}"
+                binding.tvAutoReconnectStatus.text = if (state.willReconnect) "Mencoba menyambung kembali secara otomatis." else "Koneksi terputus. Hubungkan jam untuk mencoba lagi."
+                binding.tvHeroSyncSubtitle.text = if (state.willReconnect) "Koneksi terputus · Menunggu reconnect otomatis" else "Koneksi terputus"
+                binding.badgeHeaderLiveRx.text = "OFFLINE"
+                binding.badgeHeaderLiveRx.setTextColor(coralColor)
             }
 
             is BleSyncService.SyncState.Error -> {
                 binding.tvHeaderGattStatus.text = " Koneksi bermasalah"
                 binding.tvHeaderGattStatus.setTextColor(coralColor)
                 binding.imgHeaderGattDot.setImageResource(R.drawable.dot_pulse_coral)
-                binding.tvDeviceStatusTag.text = "⚠ Error"
+                binding.tvDeviceStatusTag.text = "Koneksi bermasalah"
                 binding.tvDeviceStatusTag.setTextColor(coralColor)
-                binding.tvAutoReconnectStatus.text = "Error: ${state.message}"
+                binding.tvAutoReconnectStatus.text = "Koneksi bermasalah: ${state.message}"
+                if (state.message.startsWith("Webhook error:")) {
+                    binding.tvWebhookLastAck.text = "● ${state.message}"
+                    binding.tvWebhookLastAck.setTextColor(coralColor)
+                }
+                binding.tvHeroSyncSubtitle.text = "Koneksi bermasalah · Ketuk untuk coba ulang"
+                binding.badgeHeaderLiveRx.text = "ERR"
+                binding.badgeHeaderLiveRx.setTextColor(coralColor)
             }
         }
-        if (connectionMode.paused.value) {
+        if (paused) {
             binding.tvHeaderGattStatus.text = " Dijeda · Mi Fitness"
             binding.tvDeviceStatusTag.text = "Jeda Mi Fitness"
             binding.btnDashboardConnect.text = "Lanjutkan DirectSync"
             binding.btnSyncAll.isEnabled = false
             binding.btnToggleHeartRate.isEnabled = false
             binding.tvAutoReconnectStatus.text = "DirectSync dijeda sampai Anda memilih Lanjutkan."
+            binding.tvHeroSyncSubtitle.text = "Dijeda untuk Mi Fitness · Pilih Lanjutkan untuk menghubungkan lagi"
+            binding.badgeHeaderLiveRx.text = "PAUSED"
+            binding.badgeHeaderLiveRx.setTextColor(mutedColor)
         }
-        binding.btnConnectMain.text = if (connectionMode.paused.value) "Lanjutkan" else "Hubungkan"
+        val canDisconnect = paused ||
+            (state !is BleSyncService.SyncState.Idle &&
+                !(state is BleSyncService.SyncState.Disconnected && !state.willReconnect))
+        binding.btnDisconnectMain.isEnabled = canDisconnect
+        binding.btnDisconnectMain.alpha = if (canDisconnect) 1f else 0.45f
+        val isConnecting = !paused && (state is BleSyncService.SyncState.Connecting ||
+            state is BleSyncService.SyncState.DiscoveringServices ||
+            state is BleSyncService.SyncState.Authenticating)
+        binding.btnConnectMain.isEnabled = !isConnecting
+        binding.btnConnectMain.alpha = if (isConnecting) 0.6f else 1f
+        binding.btnConnectMain.text = when {
+            paused -> "Lanjutkan"
+            isConnecting -> "Menghubungkan…"
+            else -> "Hubungkan"
+        }
         renderSyncCenter()
+        renderDeviceFinder()
     }
 
     @SuppressLint("SetTextI18n")
     private fun updateMediaUi(media: BleSyncService.MediaPlaybackInfo) {
         val hasTrack = media.title.isNotEmpty()
-        binding.tvMediaTrackTitle.text = if (hasTrack) media.title else "Tidak ada media yang diputar"
-        binding.tvMediaArtist.text = if (hasTrack && media.artist.isNotEmpty()) media.artist else "Buka Spotify / YouTube Music di HP"
-        binding.tvMediaVolumePercent.text = "Vol ${media.volumePercent}%"
+        binding.tvMediaTrackTitle.text = if (hasTrack) media.title else "Belum ada media"
+        binding.tvMediaArtist.text = if (hasTrack && media.artist.isNotEmpty()) media.artist else "Putar musik di HP untuk mulai."
+        binding.tvMediaVolumePercent.text = "Volume ${media.volumePercent}%"
 
+        val playPauseBtn = binding.btnMediaPlayPause as? com.google.android.material.button.MaterialButton
         if (media.isPlaying) {
             binding.tvMediaStatusBadge.text = "Memutar"
             binding.tvMediaStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.primary_mint))
-            binding.btnMediaPlayPause.text = "⏸ Pause"
+            binding.btnMediaPlayPause.text = "Jeda"
+            playPauseBtn?.setIconResource(R.drawable.ic_pause)
         } else {
             binding.tvMediaStatusBadge.text = if (hasTrack) "Jeda" else "Siap"
             binding.tvMediaStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.secondary_cyan))
-            binding.btnMediaPlayPause.text = "▶ Play"
+            binding.btnMediaPlayPause.text = "Putar"
+            playPauseBtn?.setIconResource(R.drawable.ic_play_arrow)
         }
     }
 
     private fun setupHandoff(item: ItemMiFitnessHandoffBinding) {
         item.btnPauseMiFitness.setOnClickListener { openMiFitness() }
         item.btnResumeDirectSync.setOnClickListener { resumeDirectSync() }
+        item.btnImportAllMiFitness.setOnClickListener {
+            syncCenterDialog?.dismiss()
+            triggerMiFitnessImport(interactive = true)
+        }
+        item.btnManageHealthPermissions.setOnClickListener {
+            openHealthConnectPermissions()
+        }
     }
 
     private fun resumeDirectSync() {
@@ -1039,17 +1520,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun retryFromSyncCenter(metric: SyncMetric) {
         val failures = syncStatuses.entries.value.getValue(metric).failures
-        val importOnly = metric == SyncMetric.SLEEP && failures.keys == setOf("#import")
+        val importOnly = failures.keys == setOf("#import")
         if (!importOnly) {
             val service = bleService
             val error = if (service == null) "Hubungkan jam terlebih dahulu." else service.retryMetric(metric)
             if (error != null) { Toast.makeText(this, error, Toast.LENGTH_LONG).show(); return }
             Toast.makeText(this, "Meminta ulang ${metric.title.lowercase()}…", Toast.LENGTH_SHORT).show()
         }
-        if (metric == SyncMetric.SLEEP && Build.VERSION.SDK_INT >= 34) {
-            if (ContextCompat.checkSelfPermission(this, HealthConnectSleepImporter.READ_SLEEP) == PackageManager.PERMISSION_GRANTED)
-                importSleepHistory()
-            else if (failures.containsKey("#import")) sleepPermissionLauncher.launch(HealthConnectSleepImporter.READ_SLEEP)
+        if (MiFitnessHealthConnectImporter.isAvailable(this) &&
+            (failures.containsKey("#import") || MiFitnessHealthConnectImporter.hasAnyReadPermission(this))
+        ) {
+            triggerMiFitnessImport(interactive = failures.containsKey("#import"))
         }
     }
 
@@ -1091,14 +1572,50 @@ class MainActivity : AppCompatActivity() {
             else -> "Jam belum terhubung. Hubungkan jam untuk mencoba pengambilan ulang."
         }
         fun handoff(item: ItemMiFitnessHandoffBinding) {
-            item.tvConnectionMode.text = if (paused) message else "Jeda koneksi DirectSync sebelum menggunakan Mi Fitness agar koneksi jam tidak berebut."
-            item.btnPauseMiFitness.text = if (paused) "Buka Mi Fitness" else "Jeda DirectSync & buka Mi Fitness"
+            item.tvConnectionMode.text = when {
+                paused -> "DirectSync sedang dijeda. Lanjutkan setelah selesai menggunakan Mi Fitness."
+                ready -> "DirectSync aktif · jam terhubung"
+                else -> "Jam belum terhubung ke DirectSync."
+            }
+            item.btnPauseMiFitness.text = if (paused) "Buka Mi Fitness" else "Jeda & buka Mi Fitness"
+            item.btnPauseMiFitness.setIconResource(if (paused) R.drawable.ic_chevron_right else R.drawable.ic_pause)
             item.btnResumeDirectSync.visibility = if (paused) View.VISIBLE else View.GONE
+            item.btnImportAllMiFitness.isEnabled = !sleepImportRunning
+            item.btnImportAllMiFitness.text = if (sleepImportRunning) "Mengimpor riwayat…" else "Impor semua data Mi Fitness"
         }
         handoff(binding.miFitnessHandoff)
         syncCenterBinding?.let { content ->
             content.tvSyncCenterConnection.text = message
             handoff(content.handoff)
+        }
+        val embeddedTargets = mapOf(
+            SyncMetric.HEART_RATE to binding.tvSyncRowHr,
+            SyncMetric.STEPS to binding.tvSyncRowActivity,
+            SyncMetric.SLEEP to binding.tvSyncRowSleep,
+            SyncMetric.WORKOUTS to binding.tvSyncRowWorkout
+        )
+        embeddedTargets.forEach { (metric, tv) ->
+            val entry = entries.getValue(metric)
+            val evidence = viewModel.syncMetricEvidence.value[metric] ?: SyncMetricEvidence()
+            val label = metricSyncLabel(entry.copy(inProgress = entry.inProgress || (metric == SyncMetric.SLEEP && sleepImportRunning)), evidence.complete)
+            val statusWord = when (label) {
+                MetricSyncLabel.COMPLETE -> "Lengkap"
+                MetricSyncLabel.UNAVAILABLE -> "Belum tersedia"
+                MetricSyncLabel.FAILED -> "Gagal"
+                MetricSyncLabel.SYNCING -> "Menyinkronkan"
+            }
+            val color = ContextCompat.getColor(this, when (label) {
+                MetricSyncLabel.COMPLETE -> R.color.primary_mint
+                MetricSyncLabel.FAILED -> R.color.heart_rate_coral
+                MetricSyncLabel.SYNCING -> R.color.secondary_cyan
+                MetricSyncLabel.UNAVAILABLE -> R.color.on_surface_variant
+            })
+            tv.text = if (evidence.value.isNotEmpty() && evidence.value != "--") {
+                "${evidence.value} · $statusWord"
+            } else {
+                statusWord
+            }
+            tv.setTextColor(color)
         }
         val time = java.text.SimpleDateFormat("dd MMM yyyy HH:mm", Locale("id", "ID"))
         fun date(value: Long?) = value?.let { time.format(java.util.Date(it)) } ?: "Belum tercatat"
@@ -1164,6 +1681,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startScanAndShowPicker() {
+        if (bleScanInProgress) return
+        val btManager = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+        if (btManager?.adapter?.isEnabled == false) {
+            AlertDialog.Builder(this)
+                .setTitle("Bluetooth Nonaktif")
+                .setMessage("Aktifkan Bluetooth di HP terlebih dahulu untuk memindai Redmi Watch 3 di sekitar Anda.")
+                .setPositiveButton("OK", null)
+                .show()
+            return
+        }
+
+        bleScanInProgress = true
+        binding.btnScanBlePicker.isEnabled = false
+        binding.btnScanBlePicker.alpha = 0.65f
+        binding.btnScanBlePicker.text = "Memindai…"
+
         val intent = Intent(this, BleSyncService::class.java).apply {
             action = BleSyncService.ACTION_SCAN_DEVICES
         }
@@ -1175,46 +1708,58 @@ class MainActivity : AppCompatActivity() {
             Toast.LENGTH_SHORT
         ).show()
 
-        window.decorView.postDelayed({
-            val devices = viewModel.discoveredDevices.value
-            if (devices.isEmpty()) {
-                AlertDialog.Builder(this)
-                    .setTitle("Perangkat Tidak Ditemukan")
-                    .setMessage(
-                        "Tidak ada sinyal BLE yang tertangkap.\n\n" +
-                            "Tips:\n" +
-                            "1. Pastikan GPS & Bluetooth aktif di HP.\n" +
-                            "2. Layar Redmi Watch 3 harus dalam keadaan menyala.\n" +
-                            "3. Cek Settings -> About di jam tangan Anda."
-                    )
-                    .setPositiveButton("OK", null)
-                    .show()
-            } else {
-                val items = devices.map { dev ->
-                    val bondTag = if (dev.isBonded) " [BONDED]" else ""
-                    val rssiTag = if (dev.rssi != 0) " (${dev.rssi} dBm)" else ""
-                    "${dev.name}\n${dev.macAddress}$bondTag$rssiTag"
-                }.toTypedArray()
-
-                AlertDialog.Builder(this)
-                    .setTitle("Pilih Perangkat BLE Jam Tangan")
-                    .setItems(items) { _, which ->
-                        val chosen = devices[which]
-                        viewModel.saveCredentialsAndWebhook(
-                            mac = chosen.macAddress,
-                            key = viewModel.authKey.value,
-                            webhook = viewModel.webhookUrl.value
+        blePickerScanJob?.cancel()
+        blePickerScanJob = lifecycleScope.launch {
+            try {
+                delay(4_000)
+                if (isFinishing || isDestroyed) return@launch
+                val devices = viewModel.discoveredDevices.value
+                if (devices.isEmpty()) {
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("Perangkat Tidak Ditemukan")
+                        .setMessage(
+                            "Tidak ada sinyal BLE yang tertangkap.\n\n" +
+                                "Tips:\n" +
+                                "1. Pastikan GPS & Bluetooth aktif di HP.\n" +
+                                "2. Layar Redmi Watch 3 harus dalam keadaan menyala.\n" +
+                                "3. Cek Settings -> About di jam tangan Anda."
                         )
-                        Toast.makeText(
-                            this,
-                            "MAC Address diatur ke: ${chosen.macAddress}",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                    .setNegativeButton("Batal", null)
-                    .show()
+                        .setPositiveButton("OK", null)
+                        .show()
+                } else {
+                    val items = devices.map { dev ->
+                        val bondTag = if (dev.isBonded) " [BONDED]" else ""
+                        val rssiTag = if (dev.rssi != 0) " (${dev.rssi} dBm)" else ""
+                        "${dev.name}\n${dev.macAddress}$bondTag$rssiTag"
+                    }.toTypedArray()
+
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("Pilih Perangkat BLE Jam Tangan")
+                        .setItems(items) { _, which ->
+                            val chosen = devices[which]
+                            viewModel.saveCredentialsAndWebhook(
+                                mac = chosen.macAddress,
+                                key = viewModel.authKey.value,
+                                webhook = viewModel.webhookUrl.value
+                            )
+                            Toast.makeText(
+                                this@MainActivity,
+                                "MAC Address diatur ke: ${chosen.macAddress}",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                        .setNegativeButton("Batal", null)
+                        .show()
+                }
+            } finally {
+                bleScanInProgress = false
+                if (!isFinishing && !isDestroyed) {
+                    binding.btnScanBlePicker.isEnabled = true
+                    binding.btnScanBlePicker.alpha = 1f
+                    binding.btnScanBlePicker.text = "Pindai BLE"
+                }
             }
-        }, 4_000)
+        }
     }
 
     private fun validateAndStartBleService() {
@@ -1272,8 +1817,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun triggerSyncAll() {
-        if (Build.VERSION.SDK_INT >= 34 && ContextCompat.checkSelfPermission(this,
-                HealthConnectSleepImporter.READ_SLEEP) == PackageManager.PERMISSION_GRANTED) importSleepHistory()
+        if (Build.VERSION.SDK_INT >= 34 && MiFitnessHealthConnectImporter.hasAnyReadPermission(this)) {
+            importMiFitnessHistory()
+        }
         triggerSleepSync()
         bleService?.let { service ->
             service.queryBatteryStatus()
@@ -1283,7 +1829,31 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun triggerWebhookExport() {
-        val url = viewModel.webhookUrl.value
+        val url = viewModel.webhookUrl.value.trim()
+        if (url.isEmpty() || url.toHttpUrlOrNull() == null) {
+            Toast.makeText(
+                this,
+                "Atur URL Endpoint Webhook yang valid terlebih dahulu.",
+                Toast.LENGTH_LONG
+            ).show()
+            showEditWebhookDialog()
+            return
+        }
+        if (viewModel.unsyncedRecordsCount.value <= 0) {
+            val mutedColor = ContextCompat.getColor(this, R.color.on_surface_muted)
+            binding.tvWebhookLastAck.text = "● Tidak ada antrean belum push (0 rekaman)."
+            binding.tvWebhookLastAck.setTextColor(mutedColor)
+            Toast.makeText(this, "Semua rekaman sudah terkirim ke webhook.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastWebhookDispatchAtMs < 1_500L) return
+        lastWebhookDispatchAtMs = now
+
+        val cyanColor = ContextCompat.getColor(this, R.color.secondary_cyan)
+        binding.tvWebhookLastAck.text = "● Mengirim antrean ke webhook…"
+        binding.tvWebhookLastAck.setTextColor(cyanColor)
+
         if (bleService != null) {
             bleService?.triggerWebhookExport(url)
         } else {
@@ -1305,156 +1875,104 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showEditWebhookDialog() {
-        val input = EditText(this).apply {
-            setText(viewModel.webhookUrl.value)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
-            setSingleLine(true)
-            setPadding(32, 24, 32, 24)
-        }
+        val dialogBinding = DialogEditWebhookBinding.inflate(layoutInflater)
+        dialogBinding.etWebhookUrl.setText(viewModel.webhookUrl.value)
+        dialogBinding.etWebhookUrl.doAfterTextChanged { dialogBinding.tilWebhookUrl.error = null }
 
-        AlertDialog.Builder(this)
-            .setTitle("Ubah Webhook Dispatcher URL")
-            .setView(input)
-            .setPositiveButton("Simpan") { _, _ ->
-                val newUrl = input.text.toString().trim()
-                if (viewModel.saveWebhookUrl(newUrl)) {
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setView(dialogBinding.root)
+            .setPositiveButton("Simpan", null)
+            .setNegativeButton("Batal", null)
+            .create()
+
+        dialog.window?.setBackgroundDrawable(
+            ColorDrawable(ContextCompat.getColor(this, R.color.surface_container))
+        )
+        dialog.show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val newUrl = dialogBinding.etWebhookUrl.text?.toString()?.trim().orEmpty()
+            when {
+                newUrl.isEmpty() -> {
+                    dialogBinding.tilWebhookUrl.error = "Endpoint Webhook tidak boleh kosong"
+                }
+                !viewModel.saveWebhookUrl(newUrl) -> {
+                    dialogBinding.tilWebhookUrl.error = "Gunakan URL valid dengan awalan http:// atau https://"
+                }
+                else -> {
                     Toast.makeText(this, "Webhook URL disimpan!", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(this, "URL Webhook tidak valid", Toast.LENGTH_LONG).show()
+                    dialog.dismiss()
                 }
             }
-            .setNegativeButton("Batal", null)
-            .show()
+        }
     }
 
     private fun showCredentialsSettingsDialog() {
-        val density = resources.displayMetrics.density
-        val pad = (20 * density).toInt()
+        val dialogBinding = DialogCredentialsSettingsBinding.inflate(layoutInflater)
 
-        val layout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(pad, pad / 2, pad, pad / 2)
-        }
+        dialogBinding.switchAppNotifs.isChecked = Rw3NotificationListenerService.isNotificationForwardingEnabled(this)
+        dialogBinding.switchCallNotifs.isChecked = Rw3NotificationListenerService.isCallForwardingEnabled(this)
+        dialogBinding.switchWhitelistDialog.isChecked = Rw3NotificationListenerService.isWhitelistModeEnabled(this)
+        dialogBinding.rowToggleAppNotifs.setOnClickListener { dialogBinding.switchAppNotifs.toggle() }
+        dialogBinding.rowToggleCallNotifs.setOnClickListener { dialogBinding.switchCallNotifs.toggle() }
+        dialogBinding.rowToggleWhitelistMode.setOnClickListener { dialogBinding.switchWhitelistDialog.toggle() }
 
-        // Section: Notifikasi Pintar
-        val notifSectionHeader = TextView(this).apply {
-            text = "NOTIFIKASI PINTAR"
-            textSize = 13f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.primary_mint))
-            setPadding(0, 0, 0, (4 * density).toInt())
-        }
-        val cbAppNotifs = CheckBox(this).apply {
-            text = "Teruskan Notifikasi Aplikasi (WhatsApp, SMS, dll)"
-            isChecked = Rw3NotificationListenerService.isNotificationForwardingEnabled(this@MainActivity)
-            setTextColor(Color.parseColor("#E2E8F0"))
-            textSize = 13f
-        }
-        val cbCallNotifs = CheckBox(this).apply {
-            text = "Peringatan Panggilan Masuk (Incoming Calls)"
-            isChecked = Rw3NotificationListenerService.isCallForwardingEnabled(this@MainActivity)
-            setTextColor(Color.parseColor("#E2E8F0"))
-            textSize = 13f
-        }
-        val cbWhitelistMode = CheckBox(this).apply {
-            text = "Gunakan Filter Whitelist (Hanya aplikasi terpilih)"
-            isChecked = Rw3NotificationListenerService.isWhitelistModeEnabled(this@MainActivity)
-            setTextColor(Color.parseColor("#E2E8F0"))
-            textSize = 13f
-        }
+        dialogBinding.etMacAddress.setText(viewModel.macAddress.value)
+        dialogBinding.etAuthKey.setText(viewModel.authKey.value)
+        dialogBinding.etWebhookCredentials.setText(viewModel.webhookUrl.value)
 
-        val divider = View(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                (1 * density).toInt()
-            ).apply {
-                setMargins(0, (12 * density).toInt(), 0, (12 * density).toInt())
-            }
-            setBackgroundColor(Color.parseColor("#334155"))
-        }
+        dialogBinding.etMacAddress.doAfterTextChanged { dialogBinding.tilMacAddress.error = null }
+        dialogBinding.etAuthKey.doAfterTextChanged { dialogBinding.tilAuthKey.error = null }
+        dialogBinding.etWebhookCredentials.doAfterTextChanged { dialogBinding.tilWebhookCredentials.error = null }
 
-        // Section: Kredensial Jam
-        val credSectionHeader = TextView(this).apply {
-            text = "KREDENSIAL REDMI WATCH 3"
-            textSize = 13f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.secondary_cyan))
-            setPadding(0, 0, 0, (4 * density).toInt())
-        }
-
-        val macLabel = TextView(this).apply {
-            text = "Redmi Watch 3 MAC Address:"
-            textSize = 12f
-            setTextColor(Color.parseColor("#94A3B8"))
-        }
-        val macEdit = EditText(this).apply {
-            setText(viewModel.macAddress.value)
-            filters = arrayOf(InputFilter.LengthFilter(17))
-            setSingleLine(true)
-        }
-
-        val keyLabel = TextView(this).apply {
-            text = "32-Character Hex Auth Key:"
-            textSize = 12f
-            setTextColor(Color.parseColor("#94A3B8"))
-            setPadding(0, pad / 2, 0, 0)
-        }
-        val keyEdit = EditText(this).apply {
-            setText(viewModel.authKey.value)
-            filters = arrayOf(InputFilter.LengthFilter(34))
-            setSingleLine(true)
-        }
-
-        val webhookLabel = TextView(this).apply {
-            text = "Webhook Dispatcher URL:"
-            textSize = 12f
-            setTextColor(Color.parseColor("#94A3B8"))
-            setPadding(0, pad / 2, 0, 0)
-        }
-        val webhookEdit = EditText(this).apply {
-            setText(viewModel.webhookUrl.value)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
-            setSingleLine(true)
-        }
-
-        layout.addView(notifSectionHeader)
-        layout.addView(cbAppNotifs)
-        layout.addView(cbCallNotifs)
-        layout.addView(cbWhitelistMode)
-        layout.addView(divider)
-        layout.addView(credSectionHeader)
-        layout.addView(macLabel)
-        layout.addView(macEdit)
-        layout.addView(keyLabel)
-        layout.addView(keyEdit)
-        layout.addView(webhookLabel)
-        layout.addView(webhookEdit)
-
-        AlertDialog.Builder(this)
-            .setTitle("Pengaturan Sistem & Notifikasi")
-            .setView(layout)
-            .setPositiveButton("Simpan") { _, _ ->
-                Rw3NotificationListenerService.setNotificationForwardingEnabled(this, cbAppNotifs.isChecked)
-                Rw3NotificationListenerService.setCallForwardingEnabled(this, cbCallNotifs.isChecked)
-                Rw3NotificationListenerService.setWhitelistModeEnabled(this, cbWhitelistMode.isChecked)
-                updateNotificationUiState()
-
-                val result = viewModel.saveCredentialsAndWebhook(
-                    mac = macEdit.text.toString(),
-                    key = keyEdit.text.toString(),
-                    webhook = webhookEdit.text.toString()
-                )
-                result.fold(
-                    onSuccess = {
-                        Toast.makeText(this, "Pengaturan berhasil disimpan!", Toast.LENGTH_SHORT).show()
-                    },
-                    onFailure = { error ->
-                        Toast.makeText(this, error.message, Toast.LENGTH_LONG).show()
-                    }
-                )
-            }
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setView(dialogBinding.root)
+            .setPositiveButton("Simpan", null)
             .setNegativeButton("Batal", null)
-            .show()
+            .create()
+
+        dialog.window?.setBackgroundDrawable(
+            ColorDrawable(ContextCompat.getColor(this, R.color.surface_container))
+        )
+        dialog.show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val macInput = dialogBinding.etMacAddress.text?.toString().orEmpty()
+            val keyInput = dialogBinding.etAuthKey.text?.toString().orEmpty()
+            val webhookInput = dialogBinding.etWebhookCredentials.text?.toString().orEmpty()
+
+            val result = viewModel.saveCredentialsAndWebhook(
+                mac = macInput,
+                key = keyInput,
+                webhook = webhookInput
+            )
+            result.fold(
+                onSuccess = {
+                    Rw3NotificationListenerService.setNotificationForwardingEnabled(
+                        this,
+                        dialogBinding.switchAppNotifs.isChecked
+                    )
+                    Rw3NotificationListenerService.setCallForwardingEnabled(
+                        this,
+                        dialogBinding.switchCallNotifs.isChecked
+                    )
+                    Rw3NotificationListenerService.setWhitelistModeEnabled(
+                        this,
+                        dialogBinding.switchWhitelistDialog.isChecked
+                    )
+                    updateNotificationUiState()
+                    updateGroupedMenuSubtitles()
+                    Toast.makeText(this, "Pengaturan berhasil disimpan!", Toast.LENGTH_SHORT).show()
+                    dialog.dismiss()
+                },
+                onFailure = { error ->
+                    val msg = error.message ?: "Periksa kembali format input"
+                    when {
+                        msg.contains("MAC", ignoreCase = true) -> dialogBinding.tilMacAddress.error = msg
+                        msg.contains("Webhook", ignoreCase = true) -> dialogBinding.tilWebhookCredentials.error = msg
+                        else -> dialogBinding.tilAuthKey.error = msg
+                    }
+                }
+            )
+        }
     }
 
     private fun copyLogsToClipboard() {
@@ -1500,6 +2018,7 @@ class MainActivity : AppCompatActivity() {
             val item = filteredItems[position]
             holder.binding.tvAppName.text = item.appName
             holder.binding.tvPackageName.text = item.packageName
+            holder.binding.cbWhitelisted.contentDescription = "Izinkan notifikasi ${item.appName}"
             if (item.icon != null) {
                 holder.binding.ivAppIcon.setImageDrawable(item.icon)
             } else {
@@ -1516,9 +2035,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             holder.binding.root.setOnClickListener {
-                item.isSelected = !item.isSelected
-                holder.binding.cbWhitelisted.isChecked = item.isSelected
-                onSelectionChanged()
+                holder.binding.cbWhitelisted.toggle()
             }
         }
 
@@ -1587,20 +2104,27 @@ class MainActivity : AppCompatActivity() {
             val totalSelected = adapter?.getSelectedPackages()?.size ?: initialWhitelist.size
             val showingCount = adapter?.itemCount ?: 0
             dialogBinding.tvSelectedCount.text = "$totalSelected aplikasi diizinkan ($showingCount ditampilkan)"
+            val loadingVisible = dialogBinding.layoutLoading.visibility == View.VISIBLE
+            dialogBinding.tvEmptySearchApps.visibility = if (!loadingVisible && showingCount == 0) View.VISIBLE else View.GONE
+            dialogBinding.rvApps.visibility = if (!loadingVisible && showingCount > 0) View.VISIBLE else View.GONE
         }
 
         dialogBinding.rvApps.layoutManager = LinearLayoutManager(this)
 
         var scanJob: Job? = null
 
-        val alertDialog = AlertDialog.Builder(this)
-            .setView(dialogBinding.root)
-            .setPositiveButton("Simpan") { _, _ ->
+        val alertDialog = BottomSheetDialog(this)
+        alertDialog.setContentView(dialogBinding.root)
+        dialogBinding.btnSaveFilter.isEnabled = false
+        listOf(dialogBinding.btnPresetChat, dialogBinding.btnSelectAll, dialogBinding.btnClearAll)
+            .forEach { it.isEnabled = false }
+        dialogBinding.btnSaveFilter.setOnClickListener {
                 val selected = adapter?.getSelectedPackages() ?: initialWhitelist
                 val whitelistActive = dialogBinding.switchWhitelistMode.isChecked
                 Rw3NotificationListenerService.setWhitelistModeEnabled(this, whitelistActive)
                 Rw3NotificationListenerService.setWhitelistedPackages(this, selected)
                 updateNotificationUiState()
+                updateGroupedMenuSubtitles()
                 Toast.makeText(
                     this,
                     if (whitelistActive) {
@@ -1610,14 +2134,33 @@ class MainActivity : AppCompatActivity() {
                     },
                     Toast.LENGTH_SHORT
                 ).show()
+                alertDialog.dismiss()
+        }
+        dialogBinding.btnCancelFilter.setOnClickListener { alertDialog.dismiss() }
+        alertDialog.setOnDismissListener { scanJob?.cancel() }
+        alertDialog.setOnShowListener {
+            alertDialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+            val sheet = alertDialog.findViewById<FrameLayout>(com.google.android.material.R.id.design_bottom_sheet)
+                ?: return@setOnShowListener
+            sheet.setBackgroundResource(R.drawable.bg_app_filter_sheet)
+            val density = resources.displayMetrics.density
+            val maxHeight = minOf((resources.displayMetrics.heightPixels * 0.9f).toInt(), (760 * density).toInt())
+            sheet.layoutParams.height = maxHeight
+            BottomSheetBehavior.from(sheet).apply {
+                state = BottomSheetBehavior.STATE_EXPANDED
+                skipCollapsed = true
+                isDraggable = false
             }
-            .setNegativeButton("Batal", null)
-            .setOnDismissListener {
-                scanJob?.cancel()
+            // The sheet can consume IME insets before its content receives them.
+            sheet.viewTreeObserver.addOnGlobalLayoutListener {
+                val visible = android.graphics.Rect()
+                sheet.getWindowVisibleDisplayFrame(visible)
+                val height = minOf(maxHeight, visible.height())
+                if (height > 0 && sheet.layoutParams.height != height) {
+                    sheet.layoutParams = sheet.layoutParams.apply { this.height = height }
+                }
             }
-            .create()
-
-        alertDialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        }
         alertDialog.show()
 
         // Asynchronously scan installed applications without blocking UI
@@ -1626,15 +2169,15 @@ class MainActivity : AppCompatActivity() {
             val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
                 addCategory(Intent.CATEGORY_LAUNCHER)
             }
-            val resolveInfos = pm.queryIntentActivities(mainIntent, 0)
+            val resolveInfos = runCatching { pm.queryIntentActivities(mainIntent, 0) }.getOrDefault(emptyList())
             val seen = HashSet<String>()
             val items = mutableListOf<WhitelistAppItem>()
 
             for (ri in resolveInfos) {
-                val pkg = ri.activityInfo.packageName
+                val pkg = ri.activityInfo?.packageName ?: continue
                 if (pkg != packageName && seen.add(pkg)) {
-                    val label = ri.loadLabel(pm).toString()
-                    val icon = try { ri.loadIcon(pm) } catch (_: Exception) { null }
+                    val label = runCatching { ri.loadLabel(pm).toString() }.getOrDefault(pkg.substringAfterLast('.'))
+                    val icon = runCatching { ri.loadIcon(pm) }.getOrNull()
                     items.add(WhitelistAppItem(label, pkg, icon, initialWhitelist.contains(pkg)))
                 }
             }
@@ -1664,9 +2207,13 @@ class MainActivity : AppCompatActivity() {
                     updateCountDisplay()
                 }
                 dialogBinding.rvApps.adapter = adapter
+                adapter?.filter(dialogBinding.etSearchApp.text?.toString().orEmpty())
                 dialogBinding.layoutLoading.visibility = View.GONE
-                dialogBinding.rvApps.visibility = View.VISIBLE
+                dialogBinding.btnSaveFilter.isEnabled = true
+                listOf(dialogBinding.btnPresetChat, dialogBinding.btnSelectAll, dialogBinding.btnClearAll)
+                    .forEach { it.isEnabled = true }
                 updateCountDisplay()
+                updateNotificationUiState()
 
                 dialogBinding.etSearchApp.addTextChangedListener(object : TextWatcher {
                     override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}

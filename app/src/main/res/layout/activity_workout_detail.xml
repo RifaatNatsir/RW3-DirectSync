@@ -1,0 +1,1064 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/workoutDetailRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/surface_dark"
+    android:clipToPadding="false">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingBottom="28dp">
+
+        <!-- GPS Map Canvas Hero -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="260dp"
+            android:background="#121820">
+
+            <org.maplibre.android.maps.MapView
+                android:id="@+id/workoutMapView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:contentDescription="Peta rute olahraga"
+                android:visibility="gone" />
+
+            <com.rw3.directsync.ui.custom.WorkoutRouteView
+                android:id="@+id/workoutRouteView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@color/surface_dark" />
+
+            <!-- Subtle Grid Decoration & Top Overlay Bar -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingTop="12dp"
+                android:paddingBottom="16dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <ImageButton
+                        android:id="@+id/btnBackWorkout"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:background="@drawable/bg_circle_button"
+                        android:src="@drawable/ic_arrow_back"
+                        android:contentDescription="Kembali ke aktivitas olahraga"
+                        android:padding="10dp"
+                        android:scaleType="centerInside"
+                        app:tint="@color/on_surface" />
+
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="1dp"
+                        android:layout_weight="1" />
+
+                    <ImageButton
+                        android:id="@+id/btnFitWorkoutRoute"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:layout_marginEnd="8dp"
+                        android:background="@drawable/bg_circle_button"
+                        android:src="@drawable/ic_fit_route"
+                        android:contentDescription="Tampilkan seluruh rute"
+                        android:padding="12dp"
+                        android:visibility="gone"
+                        app:tint="@color/primary_mint" />
+
+                    <LinearLayout
+                        android:id="@+id/btnExportWorkout"
+                        android:layout_width="wrap_content"
+                        android:layout_height="38dp"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:background="@drawable/bg_pill_surface"
+                        android:paddingHorizontal="14dp">
+
+                        <ImageView
+                            android:layout_width="15dp"
+                            android:layout_height="15dp"
+                            android:src="@drawable/ic_export"
+                            android:importantForAccessibility="no"
+                            app:tint="@color/primary_mint" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="6dp"
+                            android:text="Ekspor"
+                            android:textSize="12sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/on_surface" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/workoutNoRouteBanner"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:paddingHorizontal="20dp">
+
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:background="@drawable/bg_box_dark"
+                        android:paddingHorizontal="14dp"
+                        android:paddingVertical="10dp">
+
+                        <ImageView
+                            android:id="@+id/imgWorkoutHeroIcon"
+                            android:layout_width="22dp"
+                            android:layout_height="22dp"
+                            android:src="@drawable/ic_directions_run"
+                            android:importantForAccessibility="no"
+                            app:tint="@color/primary_mint" />
+
+                        <LinearLayout
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="10dp"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Rute GPS belum tersedia"
+                                android:textSize="12sp"
+                                android:textStyle="bold"
+                                android:textColor="@color/on_surface" />
+
+                            <TextView
+                                android:id="@+id/tvWorkoutRouteEmptySubtitle"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="File aktivitas BLE Redmi Watch 3 hanya memuat ringkasan sesi"
+                                android:textSize="11sp"
+                                android:textColor="@color/on_surface_muted" />
+                        </LinearLayout>
+                    </LinearLayout>
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/workoutMapStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom|start"
+                android:layout_marginStart="12dp"
+                android:layout_marginEnd="12dp"
+                android:layout_marginBottom="28dp"
+                android:background="@drawable/bg_pill_surface"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="12dp"
+                android:paddingEnd="4dp"
+                android:visibility="gone">
+                <TextView
+                    android:id="@+id/tvWorkoutMapStatus"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:paddingVertical="8dp"
+                    android:layout_marginEnd="8dp"
+                    android:text="Memuat peta…"
+                    android:textColor="@color/on_surface"
+                    android:textSize="12sp" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnRetryWorkoutMap"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    android:minWidth="0dp"
+                    android:text="Coba lagi"
+                    android:textAllCaps="false"
+                    android:textSize="12sp"
+                    android:visibility="gone" />
+            </LinearLayout>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_gravity="bottom"
+                android:background="@color/outline_subtle" />
+        </FrameLayout>
+
+        <!-- Main Cards Container -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="16dp"
+            android:paddingTop="14dp">
+
+            <!-- Summary Stats Card (Mi Fitness & FigCraft inspired) -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/bg_card"
+                android:padding="16dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="bottom">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical"
+                        android:layout_marginEnd="12dp">
+
+                        <TextView
+                            android:id="@+id/tvWorkoutDetailCategory"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="RW3-DirectSync | Olahraga"
+                            android:textSize="12sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/on_surface_variant"
+                            android:maxLines="1"
+                            android:ellipsize="end" />
+
+                        <LinearLayout
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:orientation="horizontal"
+                            android:gravity="bottom">
+
+                            <TextView
+                                android:id="@+id/tvWorkoutHeroDuration"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="--:--"
+                                android:textSize="30sp"
+                                android:textStyle="bold"
+                                android:textColor="@color/on_surface" />
+
+                            <TextView
+                                android:id="@+id/tvWorkoutHeroUnit"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="6dp"
+                                android:layout_marginBottom="4dp"
+                                android:text="durasi"
+                                android:textSize="13sp"
+                                android:textStyle="bold"
+                                android:textColor="@color/on_surface_variant" />
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:gravity="end">
+
+                        <FrameLayout
+                            android:layout_width="36dp"
+                            android:layout_height="36dp"
+                            android:background="@drawable/bg_watch_avatar"
+                            android:padding="3dp">
+
+                            <ImageView
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:src="@drawable/img_redmi_watch_3"
+                                android:scaleType="fitCenter"
+                                android:importantForAccessibility="no" />
+                        </FrameLayout>
+
+                        <TextView
+                            android:id="@+id/tvWorkoutDetailDate"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:text="--/--/---- · --:--"
+                            android:textSize="11sp"
+                            android:textColor="@color/on_surface_muted" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginVertical="12dp"
+                    android:background="@color/surface_container_high" />
+
+                <!-- 3-Col Row 1 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/tvWorkoutStatDuration"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="—"
+                            android:textSize="16sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/on_surface" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="Waktu"
+                            android:textSize="11sp"
+                            android:textColor="@color/on_surface_muted" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/tvWorkoutStatCalories"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="—"
+                            android:textSize="16sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/on_surface" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="Kcal aktif"
+                            android:textSize="11sp"
+                            android:textColor="@color/on_surface_muted" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/tvWorkoutStatBurnRate"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="—"
+                            android:textSize="16sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/primary_mint" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="Kcal / mnt"
+                            android:textSize="11sp"
+                            android:textColor="@color/on_surface_muted" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- 3-Col Row 2 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/tvWorkoutStatHrAvg"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="—"
+                            android:textSize="16sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/hr_chart_line" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="BPM rata2"
+                            android:textSize="11sp"
+                            android:textColor="@color/on_surface_muted" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/tvWorkoutStatHrMin"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="—"
+                            android:textSize="16sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/secondary_cyan" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="BPM min"
+                            android:textSize="11sp"
+                            android:textColor="@color/on_surface_muted" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/tvWorkoutStatHrMax"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="—"
+                            android:textSize="16sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/on_surface" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="BPM maks"
+                            android:textSize="11sp"
+                            android:textColor="@color/on_surface_muted" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- Row 3: Pace, Steps & Cadence (visible only when populated) -->
+                <LinearLayout
+                    android:id="@+id/layoutWorkoutMetricsExtra"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:orientation="horizontal"
+                    android:visibility="gone">
+
+                    <LinearLayout
+                        android:id="@+id/colWorkoutPace"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/tvWorkoutStatPace"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="—"
+                            android:textSize="16sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/on_surface" />
+
+                        <TextView
+                            android:id="@+id/tvWorkoutLabelPace"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="Tempo rata2"
+                            android:textSize="11sp"
+                            android:textColor="@color/on_surface_muted" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/colWorkoutSteps"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/tvWorkoutStatSteps"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="—"
+                            android:textSize="16sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/on_surface" />
+
+                        <TextView
+                            android:id="@+id/tvWorkoutLabelSteps"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="Langkah"
+                            android:textSize="11sp"
+                            android:textColor="@color/on_surface_muted" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/colWorkoutCadence"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/tvWorkoutStatCadence"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="—"
+                            android:textSize="16sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/on_surface" />
+
+                        <TextView
+                            android:id="@+id/tvWorkoutLabelCadence"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="Irama (SPM)"
+                            android:textSize="11sp"
+                            android:textColor="@color/on_surface_muted" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- Row 4: Elevation Gain & Speed (visible only when >3 extra metrics populated) -->
+                <LinearLayout
+                    android:id="@+id/layoutWorkoutMetricsElevation"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:orientation="horizontal"
+                    android:visibility="gone">
+
+                    <LinearLayout
+                        android:id="@+id/colWorkoutElevation"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/tvWorkoutStatElevation"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="—"
+                            android:textSize="16sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/on_surface" />
+
+                        <TextView
+                            android:id="@+id/tvWorkoutLabelElevation"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="Elevasi naik"
+                            android:textSize="11sp"
+                            android:textColor="@color/on_surface_muted" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/colWorkoutDistanceRow"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/tvWorkoutStatSpeedKmh"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="—"
+                            android:textSize="16sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/on_surface" />
+
+                        <TextView
+                            android:id="@+id/tvWorkoutLabelSpeedKmh"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="Kec. rata2"
+                            android:textSize="11sp"
+                            android:textColor="@color/on_surface_muted" />
+                    </LinearLayout>
+
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="1dp"
+                        android:layout_weight="1" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Card Detak Jantung Sesi -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:orientation="vertical"
+                android:background="@drawable/bg_card"
+                android:padding="16dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <FrameLayout
+                        android:layout_width="28dp"
+                        android:layout_height="28dp"
+                        android:background="@drawable/bg_bar_pill"
+                        android:backgroundTint="@color/hr_zone_vo2max"
+                        android:padding="6dp">
+
+                        <ImageView
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:src="@drawable/ic_favorite"
+                            android:importantForAccessibility="no"
+                            app:tint="@color/on_surface" />
+                    </FrameLayout>
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="10dp"
+                        android:text="Detak jantung (BPM)"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/on_surface" />
+
+                    <TextView
+                        android:id="@+id/tvWorkoutHrSampleCount"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0 sampel"
+                        android:textSize="11sp"
+                        android:textColor="@color/on_surface_muted" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/tvSessionHrAvgBig"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="—"
+                            android:textSize="24sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/on_surface" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="BPM rata2"
+                            android:textSize="11sp"
+                            android:textColor="@color/on_surface_muted" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/tvSessionHrMaxBig"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="—"
+                            android:textSize="24sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/on_surface" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="BPM maks"
+                            android:textSize="11sp"
+                            android:textColor="@color/on_surface_muted" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:orientation="vertical"
+                    android:background="@drawable/bg_box_dark"
+                    android:padding="12dp">
+
+                    <FrameLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="76dp">
+
+                        <com.rw3.directsync.ui.custom.MiniSparklineView
+                            android:id="@+id/workoutHrCurve"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent" />
+
+                        <TextView
+                            android:id="@+id/tvWorkoutHrCurveEmpty"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:gravity="center"
+                            android:paddingHorizontal="12dp"
+                            android:text="Sampel detak per-menit tidak tersedia pada rentang sesi ini."
+                            android:textSize="11sp"
+                            android:textColor="@color/on_surface_muted"
+                            android:visibility="gone" />
+                    </FrameLayout>
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:layout_marginVertical="8dp"
+                        android:background="@color/surface_container_high" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/tvSessionTick0"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="00:00:00"
+                            android:textSize="11sp"
+                            android:textColor="@color/on_surface_muted" />
+
+                        <TextView
+                            android:id="@+id/tvSessionTick1"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:gravity="center"
+                            android:text="--:--"
+                            android:textSize="11sp"
+                            android:textColor="@color/on_surface_muted" />
+
+                        <TextView
+                            android:id="@+id/tvSessionTick2"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:gravity="end"
+                            android:text="--:--"
+                            android:textSize="11sp"
+                            android:textColor="@color/on_surface_muted" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvWorkoutZoneHint"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="Distribusi zona dihitung dari sampel HR sesi"
+                    android:textSize="11sp"
+                    android:textColor="@color/on_surface_muted" />
+
+                <!-- 5 HR Zone Rows -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="76dp"
+                        android:layout_height="wrap_content"
+                        android:text="Ringan"
+                        android:textSize="12sp"
+                        android:textColor="@color/on_surface_muted" />
+
+                    <FrameLayout
+                        android:id="@+id/trackWZoneLight"
+                        android:layout_width="0dp"
+                        android:layout_height="8dp"
+                        android:layout_weight="1"
+                        android:layout_marginHorizontal="8dp"
+                        android:background="@drawable/bg_bar_track">
+
+                        <View
+                            android:id="@+id/barWZoneLight"
+                            android:layout_width="0dp"
+                            android:layout_height="match_parent"
+                            android:background="@drawable/bg_bar_pill"
+                            android:backgroundTint="@color/hr_zone_light" />
+                    </FrameLayout>
+
+                    <TextView
+                        android:id="@+id/tvWZoneLightTime"
+                        android:layout_width="60dp"
+                        android:layout_height="wrap_content"
+                        android:gravity="end"
+                        android:text="00:00:00"
+                        android:textSize="11sp"
+                        android:textColor="@color/on_surface_variant" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="76dp"
+                        android:layout_height="wrap_content"
+                        android:text="Intensif"
+                        android:textSize="12sp"
+                        android:textColor="@color/on_surface_muted" />
+
+                    <FrameLayout
+                        android:id="@+id/trackWZoneIntensive"
+                        android:layout_width="0dp"
+                        android:layout_height="8dp"
+                        android:layout_weight="1"
+                        android:layout_marginHorizontal="8dp"
+                        android:background="@drawable/bg_bar_track">
+
+                        <View
+                            android:id="@+id/barWZoneIntensive"
+                            android:layout_width="0dp"
+                            android:layout_height="match_parent"
+                            android:background="@drawable/bg_bar_pill"
+                            android:backgroundTint="@color/hr_zone_intensive" />
+                    </FrameLayout>
+
+                    <TextView
+                        android:id="@+id/tvWZoneIntensiveTime"
+                        android:layout_width="60dp"
+                        android:layout_height="wrap_content"
+                        android:gravity="end"
+                        android:text="00:00:00"
+                        android:textSize="11sp"
+                        android:textColor="@color/on_surface_variant" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="76dp"
+                        android:layout_height="wrap_content"
+                        android:text="Aerobik"
+                        android:textSize="12sp"
+                        android:textColor="@color/on_surface_muted" />
+
+                    <FrameLayout
+                        android:id="@+id/trackWZoneAerobic"
+                        android:layout_width="0dp"
+                        android:layout_height="8dp"
+                        android:layout_weight="1"
+                        android:layout_marginHorizontal="8dp"
+                        android:background="@drawable/bg_bar_track">
+
+                        <View
+                            android:id="@+id/barWZoneAerobic"
+                            android:layout_width="0dp"
+                            android:layout_height="match_parent"
+                            android:background="@drawable/bg_bar_pill"
+                            android:backgroundTint="@color/hr_zone_aerobic" />
+                    </FrameLayout>
+
+                    <TextView
+                        android:id="@+id/tvWZoneAerobicTime"
+                        android:layout_width="60dp"
+                        android:layout_height="wrap_content"
+                        android:gravity="end"
+                        android:text="00:00:00"
+                        android:textSize="11sp"
+                        android:textColor="@color/on_surface_variant" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="76dp"
+                        android:layout_height="wrap_content"
+                        android:text="Anaerobik"
+                        android:textSize="12sp"
+                        android:textColor="@color/on_surface_muted" />
+
+                    <FrameLayout
+                        android:id="@+id/trackWZoneAnaerobic"
+                        android:layout_width="0dp"
+                        android:layout_height="8dp"
+                        android:layout_weight="1"
+                        android:layout_marginHorizontal="8dp"
+                        android:background="@drawable/bg_bar_track">
+
+                        <View
+                            android:id="@+id/barWZoneAnaerobic"
+                            android:layout_width="0dp"
+                            android:layout_height="match_parent"
+                            android:background="@drawable/bg_bar_pill"
+                            android:backgroundTint="@color/hr_zone_anaerobic" />
+                    </FrameLayout>
+
+                    <TextView
+                        android:id="@+id/tvWZoneAnaerobicTime"
+                        android:layout_width="60dp"
+                        android:layout_height="wrap_content"
+                        android:gravity="end"
+                        android:text="00:00:00"
+                        android:textSize="11sp"
+                        android:textColor="@color/on_surface_variant" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="76dp"
+                        android:layout_height="wrap_content"
+                        android:text="VO₂ maks"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/on_surface" />
+
+                    <FrameLayout
+                        android:id="@+id/trackWZoneVo2"
+                        android:layout_width="0dp"
+                        android:layout_height="8dp"
+                        android:layout_weight="1"
+                        android:layout_marginHorizontal="8dp"
+                        android:background="@drawable/bg_bar_track">
+
+                        <View
+                            android:id="@+id/barWZoneVo2"
+                            android:layout_width="0dp"
+                            android:layout_height="match_parent"
+                            android:background="@drawable/bg_bar_pill"
+                            android:backgroundTint="@color/hr_zone_vo2max" />
+                    </FrameLayout>
+
+                    <TextView
+                        android:id="@+id/tvWZoneVo2Time"
+                        android:layout_width="60dp"
+                        android:layout_height="wrap_content"
+                        android:gravity="end"
+                        android:text="00:00:00"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/on_surface" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Metrik Tambahan Card (Honest Data Limitations) -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:orientation="vertical"
+                android:background="@drawable/bg_card"
+                android:padding="16dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <FrameLayout
+                        android:layout_width="28dp"
+                        android:layout_height="28dp"
+                        android:background="@drawable/bg_bar_pill"
+                        android:backgroundTint="@color/primary_emerald"
+                        android:padding="6dp">
+
+                        <ImageView
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:src="@drawable/ic_show_chart"
+                            android:importantForAccessibility="no"
+                            app:tint="@color/on_surface" />
+                    </FrameLayout>
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="10dp"
+                        android:text="Tempo per km · Irama · Panjang langkah"
+                        android:textSize="14sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/on_surface" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvWorkoutUnavailableNotice"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:background="@drawable/bg_box_dark"
+                    android:padding="12dp"
+                    android:text="Data jarak GPS, tempo per kilometer, irama langkah (SPM), dan panjang langkah belum tersedia pada format berkas riwayat BLE Redmi Watch 3 yang disinkronkan langsung ke aplikasi ini."
+                    android:textSize="12sp"
+                    android:lineSpacingExtra="3dp"
+                    android:textColor="@color/on_surface_variant" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>
+
