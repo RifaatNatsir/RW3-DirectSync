@@ -58,4 +58,55 @@
     <color name="sleep_awake">#F59E0B</color>
 
     <color name="outline_subtle">#2B384A</color>
+
+    <!-- FigCraft Design System v2.0 Tokens -->
+    <color name="surface_terminal">#080C12</color>
+    <color name="surface_elevated">#202A38</color>
+    <color name="nav_pill_active_bg">#14332C</color>
+    <color name="pill_mint_bg">#0F2922</color>
+    <color name="pill_cyan_bg">#122738</color>
+    <color name="pill_cyan_active_bg">#1E3A4C</color>
+    <color name="pill_cyan_stroke">#0369A1</color>
+    <color name="pill_purple_bg">#1F1938</color>
+    <color name="pill_purple_text">#C8BAFF</color>
+    <color name="pill_amber_bg">#2B2112</color>
+    <color name="pill_coral_bg">#3D1520</color>
+    <color name="pill_coral_stroke">#7F333B</color>
+    <color name="coral_text">#FFA5AD</color>
+
+    <color name="hero_sync_start">#132A2E</color>
+    <color name="hero_sync_end">#171E29</color>
+    <color name="hero_sync_stroke">#243E46</color>
+
+    <color name="hero_hr_start">#261519</color>
+    <color name="hero_hr_end">#171E29</color>
+    <color name="hero_hr_stroke">#4B262D</color>
+
+    <color name="watch_bezel_fill">#080B10</color>
+    <color name="watch_bezel_stroke">#475569</color>
+
+    <color name="stat_bedtime_bg">#1E1930</color>
+    <color name="stat_bedtime_stroke">#4C2D73</color>
+    <color name="stat_waketime_bg">#102822</color>
+    <color name="stat_waketime_stroke">#10B981</color>
+
+    <color name="sleep_deep_pill_bg">#191E3B</color>
+    <color name="sleep_deep_pill_text">#818CF8</color>
+    <color name="sleep_light_pill_bg">#13293B</color>
+    <color name="sleep_light_pill_text">#38BDF8</color>
+    <color name="sleep_rem_pill_bg">#26193B</color>
+    <color name="sleep_rem_pill_text">#C084FC</color>
+    <color name="sleep_awake_pill_bg">#2B2112</color>
+    <color name="sleep_awake_pill_text">#FBBF24</color>
+
+    <color name="sport_tile_run">#10B981</color>
+    <color name="sport_tile_walk">#84CC16</color>
+    <color name="sport_tile_bike">#0EA5E9</color>
+    <color name="sport_tile_gym">#F59E0B</color>
+
+    <color name="hr_zone_light">#6B7280</color>
+    <color name="hr_zone_intensive">#10B981</color>
+    <color name="hr_zone_aerobic">#F59E0B</color>
+    <color name="hr_zone_anaerobic">#FB923C</color>
+    <color name="hr_zone_vo2max">#EF4444</color>
 </resources>

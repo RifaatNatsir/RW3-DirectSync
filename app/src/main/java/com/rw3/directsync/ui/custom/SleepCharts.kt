@@ -24,9 +24,9 @@ abstract class SleepChart(context: Context, attrs: AttributeSet?) : View(context
     protected val density = resources.displayMetrics.density
     protected fun dp(value: Float) = value * density
     protected fun color(id: Int) = ContextCompat.getColor(context, id)
-    protected fun label(canvas: Canvas, text: String, x: Float, y: Float, align: Paint.Align = Paint.Align.LEFT) {
+    protected fun label(canvas: Canvas, text: String, x: Float, y: Float, align: Paint.Align = Paint.Align.LEFT, sp: Float = 11f) {
         ink.shader = null; ink.color = color(R.color.on_surface_variant)
-        ink.textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 11f, resources.displayMetrics); ink.textAlign = align
+        ink.textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, sp, resources.displayMetrics); ink.textAlign = align
         canvas.drawText(text, x, y, ink)
     }
     protected fun grid(canvas: Canvas, x: Float, y: Float, right: Float) {
@@ -123,7 +123,7 @@ class SleepTimingChartView @JvmOverloads constructor(context: Context, attrs: At
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         if (points.isEmpty()) return
-        val left = dp(47f); val right = width - dp(10f); val top = dp(12f); val bottom = height - dp(24f)
+        val left = dp(42f); val right = width - dp(10f); val top = dp(12f); val bottom = height - dp(24f)
         fun y(value: Double) = top + ((value - low) / (high - low)).toFloat() * (bottom - top)
         for (i in 0..3) {
             val minute = low + (high - low) * i / 3
@@ -145,7 +145,7 @@ class SleepTimingChartView @JvmOverloads constructor(context: Context, attrs: At
         }
         points.forEachIndexed { i, point ->
             if (i == 0 || i == points.lastIndex || points.size <= 7 || (i % 7 == 0 && points.lastIndex - i >= 4))
-                label(canvas, point.date.format(DateTimeFormatter.ofPattern("dd/MM")), left + step * (i + .5f), height - dp(5f), Paint.Align.CENTER)
+                label(canvas, point.date.format(DateTimeFormatter.ofPattern("dd/MM")), left + step * (i + .5f), height - dp(5f), Paint.Align.CENTER, sp = 9.5f)
         }
     }
 }

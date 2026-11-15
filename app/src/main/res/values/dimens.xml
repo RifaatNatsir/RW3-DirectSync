@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="screen_padding_h">16dp</dimen>
+    <dimen name="card_radius">20dp</dimen>
+    <dimen name="subcard_radius">12dp</dimen>
+    <dimen name="button_radius">14dp</dimen>
+    <dimen name="bento_card_height">198dp</dimen>
+    <dimen name="bento_card_gap">12dp</dimen>
+    <dimen name="nav_dock_height">58dp</dimen>
+    <dimen name="nav_active_pill_w">52dp</dimen>
+    <dimen name="nav_active_pill_h">34dp</dimen>
+    <dimen name="text_display_metric">30sp</dimen>
+    <dimen name="text_screen_title">22sp</dimen>
+    <dimen name="text_card_title">16sp</dimen>
+    <dimen name="text_body">13sp</dimen>
+    <dimen name="text_meta">11sp</dimen>
+</resources>
+

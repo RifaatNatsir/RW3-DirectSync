@@ -1,0 +1,77 @@
+<resources>
+    <style name="SettingsCard">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:orientation">vertical</item>
+        <item name="android:padding">16dp</item>
+        <item name="android:background">@drawable/bg_card</item>
+        <item name="android:layout_marginTop">12dp</item>
+        <item name="android:layout_marginBottom">0dp</item>
+    </style>
+    <style name="SettingsTitle">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textColor">@color/on_surface</item>
+    </style>
+    <style name="SettingsBody">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:textColor">@color/on_surface_variant</item>
+        <item name="android:lineSpacingExtra">3dp</item>
+    </style>
+    <style name="SettingsSection" parent="SettingsBody">
+        <item name="android:textSize">12sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:letterSpacing">0.08</item>
+        <item name="android:layout_marginTop">8dp</item>
+        <item name="android:layout_marginBottom">12dp</item>
+    </style>
+    <style name="SettingsIcon">
+        <item name="android:layout_width">40dp</item>
+        <item name="android:layout_height">40dp</item>
+        <item name="android:padding">10dp</item>
+        <item name="android:background">@drawable/bg_settings_icon</item>
+        <item name="android:importantForAccessibility">no</item>
+    </style>
+    <style name="SettingsBadge" parent="SettingsBody">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:background">@drawable/bg_chip</item>
+        <item name="android:paddingHorizontal">10dp</item>
+        <item name="android:paddingVertical">6dp</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textColor">@color/primary_mint</item>
+    </style>
+    <style name="SettingsButton" parent="Widget.Material3.Button.TonalButton">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="android:paddingVertical">10dp</item>
+        <item name="android:paddingHorizontal">14dp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textColor">@color/on_surface</item>
+        <item name="backgroundTint">@color/surface_container_highest</item>
+        <item name="cornerRadius">14dp</item>
+        <item name="iconSize">18dp</item>
+        <item name="iconPadding">8dp</item>
+        <item name="iconGravity">textStart</item>
+        <item name="iconTint">@color/on_surface</item>
+    </style>
+    <style name="SettingsPrimaryButton" parent="SettingsButton">
+        <item name="backgroundTint">@color/primary_mint</item>
+        <item name="android:textColor">@color/surface_dark</item>
+        <item name="iconTint">@color/surface_dark</item>
+    </style>
+    <style name="SettingsDangerButton" parent="SettingsButton">
+        <item name="backgroundTint">@color/heart_rate_coral_bg</item>
+        <item name="android:textColor">@color/heart_rate_coral</item>
+        <item name="iconTint">@color/heart_rate_coral</item>
+    </style>
+</resources>
