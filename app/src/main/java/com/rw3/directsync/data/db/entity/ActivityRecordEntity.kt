@@ -21,6 +21,10 @@ data class ActivityRecordEntity(
     val standingHours: Int? = null,
     val activeSeconds: Int? = null,
     val sportType: Int? = null,
+    val distanceMeters: Double? = null,
+    val elevationGainMeters: Double? = null,
+    val avgSpeedMps: Double? = null,
+    val routeJson: String? = null,
     val sourceFileId: String,
     val formatVersion: Int,
     val syncedToWebhook: Boolean = false

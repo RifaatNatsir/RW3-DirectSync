@@ -24,7 +24,7 @@ import com.rw3.directsync.data.db.dao.DailyActivityMinuteDao
         ActivityRecordEntity::class,
         DailyActivityMinuteEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class Rw3Database : RoomDatabase() {
@@ -78,6 +78,15 @@ abstract class Rw3Database : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE activity_records ADD COLUMN distanceMeters REAL")
+                db.execSQL("ALTER TABLE activity_records ADD COLUMN elevationGainMeters REAL")
+                db.execSQL("ALTER TABLE activity_records ADD COLUMN avgSpeedMps REAL")
+                db.execSQL("ALTER TABLE activity_records ADD COLUMN routeJson TEXT")
+            }
+        }
+
         fun getDatabase(context: Context): Rw3Database {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -85,7 +94,7 @@ abstract class Rw3Database : RoomDatabase() {
                     Rw3Database::class.java,
                     DATABASE_NAME
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     .build()
                 INSTANCE = instance
                 instance

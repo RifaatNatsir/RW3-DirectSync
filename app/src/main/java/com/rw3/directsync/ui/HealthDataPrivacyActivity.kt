@@ -17,12 +17,12 @@ class HealthDataPrivacyActivity : AppCompatActivity() {
             setBackgroundColor(ContextCompat.getColor(context, R.color.surface_dark))
         }
         content.addView(TextView(this).apply {
-            text = "Akses riwayat tidur"
+            text = "Akses data Mi Fitness"
             textSize = 24f
             setTextColor(ContextCompat.getColor(context, R.color.on_surface))
         })
         content.addView(TextView(this).apply {
-            text = "RW3-DirectSync membaca data tidur dari Mi Fitness melalui Health Connect untuk menampilkan sesi dan riwayat tidur di HP. Data disimpan di database lokal aplikasi.\n\nAplikasi tidak menulis atau menghapus data Health Connect. Jika Anda menekan Ekspor Webhook, fase tidur tersimpan ikut dikirim ke alamat webhook yang Anda atur.\n\nAnda dapat mencabut izin membaca tidur melalui pengaturan Health Connect kapan saja."
+            text = "RW3-DirectSync membaca data kesehatan dan olahraga dari Mi Fitness melalui Health Connect (termasuk riwayat historis) untuk menampilkan seluruh catatan lama dan terbaru di HP: tidur, detak jantung, langkah harian, kalori aktif, SpO₂, sesi olahraga, jarak, kecepatan, elevasi, serta rute GPS.\n\nSeluruh data hanya disimpan di database lokal aplikasi pada perangkat ini. Aplikasi tidak menulis, mengubah, atau menghapus data di Health Connect. Saat Anda membuka peta rute, aplikasi mengunduh peta dasar dari OpenFreeMap. Penyedia peta menerima permintaan untuk wilayah yang ditampilkan; garis rute digambar di perangkat. Jika Anda mengaktifkan atau menekan Ekspor Webhook, rekaman yang tersimpan dapat dikirim ke alamat webhook yang Anda atur.\n\nAnda dapat memilih atau mencabut izin kapan saja melalui pengaturan Health Connect."
             textSize = 16f
             setPadding(0, padding, 0, 0)
             setTextColor(ContextCompat.getColor(context, R.color.on_surface_variant))

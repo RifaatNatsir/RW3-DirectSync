@@ -6,6 +6,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
+import com.rw3.directsync.data.MiFitnessHealthMapper
 import com.rw3.directsync.data.db.entity.ActivityRecordEntity
 import kotlinx.coroutines.flow.Flow
 
@@ -21,6 +22,9 @@ interface ActivityRecordDao {
     @Query("SELECT * FROM activity_records WHERE id = :id LIMIT 1")
     suspend fun find(id: String): ActivityRecordEntity?
 
+    @Query("SELECT * FROM activity_records WHERE id = :id LIMIT 1")
+    fun observeRecordById(id: String): Flow<ActivityRecordEntity?>
+
     @Query("SELECT * FROM activity_records WHERE category = 'daily' AND timestamp >= :start AND timestamp < :end ORDER BY timestamp DESC LIMIT 1")
     suspend fun findDaily(start: Long, end: Long): ActivityRecordEntity?
 
@@ -28,9 +32,13 @@ interface ActivityRecordDao {
     suspend fun insert(records: List<ActivityRecordEntity>) {
         records.forEach { incoming ->
             val old = find(incoming.id)
-            if (old == null) insertNew(listOf(incoming))
-            else if (old.copy(syncedToWebhook = false) != incoming.copy(syncedToWebhook = false)) {
-                update(incoming.copy(syncedToWebhook = false))
+            if (old == null) {
+                insertNew(listOf(incoming))
+            } else {
+                val merged = MiFitnessHealthMapper.mergeRecord(old, incoming)
+                if (old.copy(syncedToWebhook = false) != merged.copy(syncedToWebhook = false)) {
+                    update(merged.copy(syncedToWebhook = false))
+                }
             }
         }
     }
@@ -57,7 +65,10 @@ interface ActivityRecordDao {
     @Query("SELECT * FROM activity_records WHERE category = 'daily' AND timestamp >= (SELECT MAX(timestamp) - 172800000 FROM activity_records WHERE category = 'daily') ORDER BY timestamp DESC")
     fun observeDailySnapshots(): Flow<List<ActivityRecordEntity>>
 
-    @Query("SELECT * FROM activity_records WHERE category = 'workout' ORDER BY timestamp DESC LIMIT 20")
+    @Query("SELECT * FROM activity_records WHERE category = 'workout' AND timestamp >= :startMin AND timestamp <= :startMax ORDER BY timestamp DESC")
+    suspend fun findWorkoutsNear(startMin: Long, startMax: Long): List<ActivityRecordEntity>
+
+    @Query("SELECT * FROM activity_records WHERE category = 'workout' ORDER BY timestamp DESC LIMIT 500")
     fun observeWorkouts(): Flow<List<ActivityRecordEntity>>
 
     @Query("SELECT * FROM activity_records WHERE category = :category ORDER BY timestamp DESC LIMIT 1")

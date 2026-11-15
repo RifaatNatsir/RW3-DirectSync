@@ -31,6 +31,9 @@ interface HeartRateDao {
     @Query("SELECT * FROM heart_rate_records WHERE timestamp >= :sinceTimestamp ORDER BY timestamp ASC")
     fun observeRecordsSince(sinceTimestamp: Long): Flow<List<HeartRateEntity>>
 
+    @Query("SELECT * FROM heart_rate_records WHERE timestamp >= :startTime AND timestamp <= :endTime ORDER BY timestamp ASC")
+    suspend fun getRecordsBetween(startTime: Long, endTime: Long): List<HeartRateEntity>
+
     @Query("SELECT * FROM heart_rate_records ORDER BY timestamp DESC LIMIT 1")
     suspend fun getLatestRecord(): HeartRateEntity?
 

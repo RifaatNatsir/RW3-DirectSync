@@ -23,13 +23,27 @@ class SyncStatusRepository private constructor(context: Context) {
         tracker.received(id.hex(), SyncMetric.forFile(id), metrics, System.currentTimeMillis()); publish()
     }
     @Synchronized fun importedSleep(hasRecords: Boolean) {
-        tracker.receivedExternal(SyncMetric.SLEEP, System.currentTimeMillis(), hasRecords)
+        imported(setOf(SyncMetric.SLEEP), hasRecords)
+    }
+
+    @Synchronized fun imported(metrics: Set<SyncMetric>, hasRecords: Boolean) {
+        val now = System.currentTimeMillis()
+        metrics.forEach { tracker.receivedExternal(it, now, hasRecords) }
         publish()
     }
     @Synchronized fun observed(metrics: Set<SyncMetric>) {
         metrics.forEach { tracker.receivedExternal(it, System.currentTimeMillis()) }; publish()
     }
-    @Synchronized fun importFailed(message: String) { tracker.fail(setOf(SyncMetric.SLEEP), "#import", message); publish() }
+    @Synchronized fun importFailed(message: String) {
+        importFailed(setOf(SyncMetric.SLEEP), message)
+    }
+
+    @Synchronized fun importFailed(metrics: Set<SyncMetric>, message: String) {
+        if (metrics.isNotEmpty()) {
+            tracker.fail(metrics, "#import", message)
+            publish()
+        }
+    }
     @Synchronized fun fileFailed(id: ByteArray, message: String) {
         tracker.fail(SyncMetric.forFile(id), id.hex(), message); publish()
     }
