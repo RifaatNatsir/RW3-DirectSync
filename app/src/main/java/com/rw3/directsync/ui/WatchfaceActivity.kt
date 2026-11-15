@@ -147,13 +147,18 @@ class WatchfaceActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+        UiTransitions.registerCloseTransitionIfSupported(this)
         binding = ActivityWatchfaceBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        setupInsetsAndBack()
         setupToolbar()
         setupRecyclerView()
         setupClickListeners()
         setupPreviewTouchPan()
+        updateIdlePlaceholderClock()
+        updatePhotoControlsState(isTransferring = false)
         for (profile in PhotoWatchfaceProfile.values()) {
             if (profile == PhotoWatchfaceProfile.HANDWRITING) {
                 lifecycleScope.launch {
@@ -192,13 +197,50 @@ class WatchfaceActivity : AppCompatActivity() {
         processedWallpaperBitmap = null
     }
 
+    private fun setupInsetsAndBack() {
+        val topPad = binding.watchfaceHeaderBar.paddingTop
+        val scrollPadBottom = binding.watchfaceScroll.paddingBottom
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.watchfaceRoot) { _, insets ->
+            val bars = insets.getInsets(
+                androidx.core.view.WindowInsetsCompat.Type.systemBars() or
+                    androidx.core.view.WindowInsetsCompat.Type.displayCutout()
+            )
+            binding.watchfaceHeaderBar.setPadding(
+                binding.watchfaceHeaderBar.paddingLeft,
+                topPad + bars.top,
+                binding.watchfaceHeaderBar.paddingRight,
+                binding.watchfaceHeaderBar.paddingBottom
+            )
+            binding.watchfaceScroll.setPadding(
+                binding.watchfaceScroll.paddingLeft,
+                binding.watchfaceScroll.paddingTop,
+                binding.watchfaceScroll.paddingRight,
+                scrollPadBottom + bars.bottom
+            )
+            insets
+        }
+        androidx.core.view.ViewCompat.requestApplyInsets(binding.watchfaceRoot)
+
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                UiTransitions.finishWithCloseTransition(this@WatchfaceActivity)
+            }
+        })
+    }
+
     private fun setupToolbar() {
         binding.btnBack.setOnClickListener {
-            finish()
+            UiTransitions.finishWithCloseTransition(this)
         }
         binding.btnRefreshWatchfacesTop.setOnClickListener {
             if (isUploadReady()) bleService?.queryWatchfaceList() else bleService?.reconnectForWatchface()
             Toast.makeText(this, if (isUploadReady()) "Meminta daftar watchface..." else "Menghubungkan kanal unggah jam...", Toast.LENGTH_SHORT).show()
+        }
+        binding.tvWatchConnectionStatus.setOnClickListener {
+            if (!isUploadReady()) {
+                bleService?.reconnectForWatchface()
+                Toast.makeText(this, "Menghubungkan ke Redmi Watch 3...", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -299,7 +341,16 @@ class WatchfaceActivity : AppCompatActivity() {
                     exportWatchface.launch("${template.profile.fileStem}-Custom-${template.profile.watchfaceId}.bin")
                 } catch (e: Exception) {
                     Toast.makeText(this@WatchfaceActivity, "Gagal membuat watchface: ${e.message}", Toast.LENGTH_LONG).show()
-                } finally { binding.btnExportWatchface.isEnabled = designReady && processedWallpaperBitmap != null }
+                } finally {
+                    val canExport = designReady && processedWallpaperBitmap != null
+                    binding.btnExportWatchface.isEnabled = canExport
+                    binding.btnExportWatchface.alpha = if (canExport) 1f else 0.5f
+                }
+            }
+        }
+        binding.frameWatchBezel.setOnClickListener {
+            if (selectedRawBitmap == null) {
+                binding.btnPickPhoto.performClick()
             }
         }
         // Photo Picker - use standard image document/gallery selector to prevent PhotoPicker process kill on OEM ROMs
@@ -406,31 +457,71 @@ class WatchfaceActivity : AppCompatActivity() {
         }
     }
 
+    private fun updateIdlePlaceholderClock() {
+        val now = Date()
+        binding.tvWatchPlaceholderDate.text = SimpleDateFormat("EEE dd MMM", Locale("id", "ID"))
+            .format(now)
+            .uppercase(Locale.getDefault())
+        binding.tvWatchPlaceholderClock.text = SimpleDateFormat("HH:mm", Locale.getDefault()).format(now)
+        val styleTitle = selectedProfile?.title ?: "Handwriting"
+        binding.tvWatchPlaceholderHint.text = "$styleTitle · Ketuk galeri"
+    }
+
+    private fun updatePhotoControlsState(isTransferring: Boolean) {
+        val hasPhoto = selectedRawBitmap != null
+        val cropEnabled = hasPhoto && !isTransferring
+        listOf(binding.btnZoomOut, binding.btnZoomIn, binding.btnResetCrop).forEach { btn ->
+            btn.isEnabled = cropEnabled
+            btn.alpha = if (cropEnabled) 1f else 0.45f
+        }
+        binding.btnTextColor.isEnabled = !isTransferring
+        binding.btnTextColor.alpha = if (!isTransferring) 1f else 0.45f
+    }
+
     private fun updateConnectionUi(isConnected: Boolean) {
         val isTransferring = bleService?.watchfaceTransferState?.value?.let {
             it is WatchfaceTransferState.PreparingUpload ||
                     it is WatchfaceTransferState.Uploading ||
                     it is WatchfaceTransferState.Verifying
         } ?: false
+        val canInstallWallpaper = !isTransferring && processedWallpaperBitmap != null && designReady && isConnected
+        val canExport = !isTransferring && processedWallpaperBitmap != null && designReady
+        val canInstallImported = !isTransferring && importedPackageData != null && isConnected
+
         if (isConnected) {
-            binding.tvWatchConnectionStatus.text = "Terhubung ke Redmi Watch 3"
+            binding.tvWatchConnectionStatus.text = "Redmi Watch 3 · 390×450 AMOLED"
             binding.tvWatchConnectionStatus.setTextColor(ContextCompat.getColor(this, R.color.primary_mint))
-            binding.btnInstallToWatch.isEnabled = !isTransferring && processedWallpaperBitmap != null && designReady
-            binding.btnInstallImportedPackage.isEnabled = !isTransferring && (importedPackageData != null)
         } else {
-            binding.tvWatchConnectionStatus.text = "Jam belum siap · ketuk ikon untuk menghubungkan"
+            binding.tvWatchConnectionStatus.text = "Jam belum siap · ketuk untuk menghubungkan"
             binding.tvWatchConnectionStatus.setTextColor(ContextCompat.getColor(this, R.color.on_surface_muted))
-            binding.btnInstallToWatch.isEnabled = false
-            binding.btnInstallImportedPackage.isEnabled = false
+        }
+
+        binding.btnInstallToWatch.isEnabled = canInstallWallpaper
+        binding.btnInstallToWatch.alpha = if (canInstallWallpaper) 1f else 0.5f
+        binding.btnExportWatchface.isEnabled = canExport
+        binding.btnExportWatchface.alpha = if (canExport) 1f else 0.5f
+        binding.btnInstallImportedPackage.isEnabled = canInstallImported
+        binding.btnInstallImportedPackage.alpha = if (canInstallImported) 1f else 0.5f
+
+        binding.tvInstallWarning.visibility = when {
+            selectedProfile != null && !designReady -> {
+                binding.tvInstallWarning.text = "Pilih berkas ${selectedProfile?.title} asli di panel Gaya Watchface di bawah."
+                View.VISIBLE
+            }
+            processedWallpaperBitmap != null && !isConnected -> {
+                binding.tvInstallWarning.text = "Jam belum terhubung · ketuk Muat Ulang di atas untuk menyambung."
+                View.VISIBLE
+            }
+            else -> View.GONE
         }
     }
 
     private fun updateWatchfaceListUi(list: List<XiaomiWearProtocolEngine.WatchfaceItem>) {
         if (list.isEmpty()) {
-            binding.tvEmptyWatchfaces.visibility = View.VISIBLE
+            binding.layoutEmptyWatchfaces.visibility = View.VISIBLE
             binding.rvInstalledWatchfaces.visibility = View.GONE
         } else {
-            binding.tvEmptyWatchfaces.visibility = View.GONE
+            binding.layoutEmptyWatchfaces.visibility = View.GONE
             binding.rvInstalledWatchfaces.visibility = View.VISIBLE
             watchfaceAdapter.submitList(list)
         }
@@ -442,7 +533,7 @@ class WatchfaceActivity : AppCompatActivity() {
                 state is WatchfaceTransferState.Verifying
 
         val isConnected = isUploadReady()
-        binding.btnTextColor.isEnabled = !isTransferring
+        updatePhotoControlsState(isTransferring)
         binding.switchTextShadow.isEnabled = !isTransferring
         binding.sliderShadowFeather.isEnabled = !isTransferring && textStyle.shadow
         binding.btnPickPhoto.isEnabled = !isTransferring
@@ -450,8 +541,8 @@ class WatchfaceActivity : AppCompatActivity() {
         binding.dropdownWatchfaceDesign.isEnabled = !isTransferring
         binding.btnPickWatchfaceTemplate.isEnabled = !isTransferring
         binding.btnImportPackage.isEnabled = !isTransferring
-        binding.btnInstallToWatch.isEnabled = !isTransferring && processedWallpaperBitmap != null && designReady && isConnected
-        binding.btnInstallImportedPackage.isEnabled = !isTransferring && (importedPackageData != null) && isConnected
+        binding.btnImportPackage.alpha = if (!isTransferring) 1f else 0.45f
+        updateConnectionUi(isConnected)
 
         when (state) {
             is WatchfaceTransferState.Idle -> {
@@ -479,8 +570,8 @@ class WatchfaceActivity : AppCompatActivity() {
                 binding.layoutTransferResult.visibility = View.GONE
                 binding.progressBarTransfer.progress = state.percent
                 binding.tvTransferProgressPercent.text = "${state.percent}%"
-                binding.tvTransferStatus.text = "Mengunggah paket data ke Redmi Watch 3..."
-                binding.tvTransferBytes.text = "${state.bytesSent / 1024} KB / ${state.totalBytes / 1024} KB"
+                binding.tvTransferStatus.text = "Mengirim via SPP Ch5 (${state.bytesSent / 1024} / ${state.totalBytes / 1024} KB)"
+                binding.tvTransferBytes.text = "Jaga jarak jam dengan HP"
             }
             is WatchfaceTransferState.Verifying -> {
                 binding.layoutTransferProgress.visibility = View.VISIBLE
@@ -539,10 +630,35 @@ class WatchfaceActivity : AppCompatActivity() {
     private fun updateStyleControls() {
         updatingStyleControls = true
         val color = textStyle.color
-        binding.btnTextColor.text = if (color == null) "Warna angka · Asli" else "Warna angka · #${String.format("%06X", color and 0xFFFFFF)}"
-        binding.btnTextColor.backgroundTintList = android.content.res.ColorStateList.valueOf(color ?: ContextCompat.getColor(this, R.color.btn_dark_bg))
-        val light = color != null && ((color ushr 16 and 255) * 299 + (color ushr 8 and 255) * 587 + (color and 255) * 114) > 150000
-        binding.btnTextColor.setTextColor(if (light) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+        val shortName = when (color) {
+            null -> "Asli"
+            -1 -> "Putih"
+            0xFF000000.toInt() -> "Hitam"
+            0xFF6FE0BD.toInt() -> "Mint"
+            0xFFFFD54F.toInt() -> "Kuning"
+            0xFFFFA45B.toInt() -> "Jingga"
+            0xFFFF7070.toInt() -> "Merah"
+            0xFF6CB9FF.toInt() -> "Biru"
+            0xFFC5A6FF.toInt() -> "Ungu"
+            else -> "#${String.format("%06X", color and 0xFFFFFF)}"
+        }
+        val mint = ContextCompat.getColor(this, R.color.primary_mint)
+        val mintPillBg = ContextCompat.getColor(this, R.color.pill_mint_bg)
+        val darkPillBg = ContextCompat.getColor(this, R.color.surface_container_low)
+        val isDarkCustom = color != null && ((color ushr 16 and 255) * 299 + (color ushr 8 and 255) * 587 + (color and 255) * 114) < 80000
+        val pillAccent = when {
+            color == null -> mint
+            isDarkCustom -> ContextCompat.getColor(this, R.color.on_surface_variant)
+            else -> color
+        }
+        val pillText = if (color == null) mint else if (isDarkCustom) android.graphics.Color.WHITE else color
+        binding.btnTextColor.text = "Teks: $shortName"
+        binding.btnTextColor.backgroundTintList = android.content.res.ColorStateList.valueOf(
+            if (color == null || color == 0xFF6FE0BD.toInt()) mintPillBg else darkPillBg
+        )
+        (binding.btnTextColor as? com.google.android.material.button.MaterialButton)?.strokeColor =
+            android.content.res.ColorStateList.valueOf(pillAccent)
+        binding.btnTextColor.setTextColor(pillText)
         binding.switchTextShadow.isChecked = textStyle.shadow
         binding.sliderShadowFeather.value = textStyle.feather.toFloat()
         binding.sliderShadowFeather.isEnabled = textStyle.shadow
@@ -588,8 +704,9 @@ class WatchfaceActivity : AppCompatActivity() {
             selectedTemplate == null -> "Pilih ${profile.originalFileName} dari folder Unduhan. Berkas asli diperlukan satu kali."
             else -> "${profile.title} · komponen jam asli, latar foto Anda."
         }
-        binding.btnInstallToWatch.text = if (profile != null) "Pasang ${profile.title} ke jam" else "Pasang Wallpaper ke Jam"
+        binding.btnInstallToWatch.text = if (profile != null) "Pasang ${profile.title} ke Jam" else "Pasang Wallpaper ke Jam"
         binding.btnExportWatchface.isEnabled = designReady && processedWallpaperBitmap != null
+        updateIdlePlaceholderClock()
         updateConnectionUi(isUploadReady())
     }
 
@@ -701,6 +818,7 @@ class WatchfaceActivity : AppCompatActivity() {
                     currentPanY = 0.5f
 
                     binding.layoutPhotoControls.visibility = View.VISIBLE
+                    updatePhotoControlsState(isTransferring = false)
                     renderPreviewWithCurrentSettings()
 
                     val isConnected = isUploadReady()

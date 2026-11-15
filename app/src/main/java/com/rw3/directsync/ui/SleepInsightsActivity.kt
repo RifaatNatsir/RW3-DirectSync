@@ -65,10 +65,22 @@ class SleepInsightsActivity : AppCompatActivity() {
         selectedStart = (savedInstanceState?.getLong("session", -1)
             ?: intent.getLongExtra(EXTRA_SESSION_START, -1)).takeIf { it > 0 }
         jumpToTimeline = savedInstanceState == null && selectedStart != null
+        UiTransitions.registerCloseTransitionIfSupported(this)
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                UiTransitions.finishWithCloseTransition(this@SleepInsightsActivity)
+            }
+        })
         binding.sleepPeriod.check(if (count == 7) R.id.sleepWeek else R.id.sleepMonth)
-        binding.backToDashboard.setOnClickListener { finish() }
+        updatePeriodToggleUi()
+        binding.backToDashboard.setOnClickListener { UiTransitions.finishWithCloseTransition(this) }
+        binding.btnSleepImportMi.setOnClickListener { triggerMiFitnessSleepImport() }
         binding.sleepPeriod.addOnButtonCheckedListener { _, id, checked ->
-            if (checked) { count = if (id == R.id.sleepWeek) 7 else 30; render() }
+            if (checked) {
+                count = if (id == R.id.sleepWeek) 7 else 30
+                updatePeriodToggleUi()
+                render()
+            }
         }
         binding.previousSleepPeriod.setOnClickListener { end = end.minusDays(count.toLong()); selectLatestInPeriod(); render() }
         binding.nextSleepPeriod.setOnClickListener { end = minOf(LocalDate.now(zone), end.plusDays(count.toLong())); selectLatestInPeriod(); render() }
@@ -101,6 +113,101 @@ class SleepInsightsActivity : AppCompatActivity() {
         }
     }
 
+    private var sleepImportRunning = false
+    private var askedExtraPermissions = false
+    private val sleepImportPermissionLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        if (grants.values.any { it } ||
+            (android.os.Build.VERSION.SDK_INT >= 34 &&
+                com.rw3.directsync.data.MiFitnessHealthConnectImporter.hasAnyReadPermission(this))
+        ) {
+            performSleepImport()
+        } else {
+            android.widget.Toast.makeText(
+                this,
+                "Izin Health Connect belum diberikan.",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    private fun triggerMiFitnessSleepImport() {
+        if (android.os.Build.VERSION.SDK_INT < 34 ||
+            !com.rw3.directsync.data.MiFitnessHealthConnectImporter.isAvailable(this)
+        ) {
+            android.widget.Toast.makeText(
+                this,
+                "Impor Mi Fitness tersedia pada Android 14 atau lebih baru. Sinkronkan tidur langsung dari jam tetap tersedia.",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+        val missing = com.rw3.directsync.data.MiFitnessHealthConnectImporter.missingPermissions(this)
+        if (!com.rw3.directsync.data.MiFitnessHealthConnectImporter.hasPermission(
+                this,
+                com.rw3.directsync.data.MiFitnessHealthConnectImporter.READ_SLEEP
+            )
+        ) {
+            sleepImportPermissionLauncher.launch(
+                com.rw3.directsync.data.MiFitnessHealthConnectImporter.supportedPermissions(this).toTypedArray()
+            )
+        } else if (missing.isNotEmpty() && !askedExtraPermissions) {
+            askedExtraPermissions = true
+            sleepImportPermissionLauncher.launch(
+                com.rw3.directsync.data.MiFitnessHealthConnectImporter.supportedPermissions(this).toTypedArray()
+            )
+        } else {
+            performSleepImport()
+        }
+    }
+
+    private fun performSleepImport() {
+        if (sleepImportRunning || android.os.Build.VERSION.SDK_INT < 34) return
+        sleepImportRunning = true
+        binding.btnSleepImportMi.isEnabled = false
+        binding.btnSleepImportMi.text = "Mengimpor…"
+        lifecycleScope.launch {
+            try {
+                val summary = com.rw3.directsync.data.MiFitnessHealthConnectImporter(this@SleepInsightsActivity).importAll()
+                val msg = if (summary.totalItems > 0) {
+                    "Diimpor: ${summary.sleepSessions} tidur · ${summary.workouts} olahraga · ${summary.dailyDays} hari."
+                } else {
+                    "Belum ada data baru di Health Connect."
+                }
+                android.widget.Toast.makeText(this@SleepInsightsActivity, msg, android.widget.Toast.LENGTH_LONG).show()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                com.rw3.directsync.sync.SyncStatusRepository.get(this@SleepInsightsActivity)
+                    .importFailed(e.message ?: "Periksa izin Health Connect.")
+                android.widget.Toast.makeText(
+                    this@SleepInsightsActivity,
+                    "Gagal impor: ${e.message ?: "periksa izin Health Connect"}",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            } finally {
+                sleepImportRunning = false
+                binding.btnSleepImportMi.isEnabled = true
+                binding.btnSleepImportMi.text = "Impor Mi"
+            }
+        }
+    }
+
+    private fun updatePeriodToggleUi() {
+        val activeBg = android.content.res.ColorStateList.valueOf(
+            androidx.core.content.ContextCompat.getColor(this, R.color.surface_elevated)
+        )
+        val transparentBg = android.content.res.ColorStateList.valueOf(android.graphics.Color.TRANSPARENT)
+        val white = androidx.core.content.ContextCompat.getColor(this, R.color.on_surface)
+        val muted = androidx.core.content.ContextCompat.getColor(this, R.color.on_surface_variant)
+        val weekSelected = count == 7
+        binding.sleepWeek.backgroundTintList = if (weekSelected) activeBg else transparentBg
+        binding.sleepWeek.setTextColor(if (weekSelected) white else muted)
+        binding.sleepMonth.backgroundTintList = if (!weekSelected) activeBg else transparentBg
+        binding.sleepMonth.setTextColor(if (!weekSelected) white else muted)
+    }
+
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString("end", end.toString()); outState.putInt("count", count)
         outState.putString("date", selectedDate.toString()); outState.putLong("session", selectedStart ?: -1)
@@ -114,6 +221,7 @@ class SleepInsightsActivity : AppCompatActivity() {
         selectedStart = day?.primary?.startTimestamp
     }
     private fun duration(minutes: Int) = "${minutes / 60}j ${minutes % 60}m"
+    private fun dateShort(value: LocalDate) = value.format(DateTimeFormatter.ofPattern("dd MMM", locale))
     private fun date(value: LocalDate) = value.format(DateTimeFormatter.ofPattern("dd MMM yyyy", locale))
     private fun time(value: Long, pattern: String = "HH:mm") = Instant.ofEpochMilli(value).atZone(zone).format(DateTimeFormatter.ofPattern(pattern, locale))
     private fun clock(value: Double): String {
@@ -125,13 +233,13 @@ class SleepInsightsActivity : AppCompatActivity() {
     private fun render() {
         val days = periodDays()
         if (selectedDate !in days.first().date..end) selectLatestInPeriod()
-        binding.sleepDateRange.text = "${date(days.first().date)}\n– ${date(end)}"
+        binding.sleepDateRange.text = "${dateShort(days.first().date)} – ${date(end)}"
         binding.previousSleepPeriod.isEnabled = sessions.any { SleepInsights.date(it.endTimestamp, zone) < days.first().date }
         binding.nextSleepPeriod.isEnabled = end < LocalDate.now(zone)
         val recorded = days.mapNotNull { it.minutes }
-        binding.sleepAverage.text = if (recorded.isEmpty()) "Belum ada data" else duration(recorded.average().roundToInt())
-        binding.sleepCoverage.text = if (recorded.isEmpty()) "Belum ada tidur tersimpan pada periode ini. Sinkronkan jam atau impor Mi Fitness dari Dashboard."
-            else "Rata-rata per hari tercatat · ${recorded.size}/$count hari\n${days.sumOf { it.sessions.size }} sesi · total ${duration(recorded.sum())}"
+        binding.sleepAverage.text = if (recorded.isEmpty()) "—" else duration(recorded.average().roundToInt())
+        binding.sleepCoverage.text = if (recorded.isEmpty()) "Belum ada tidur tersimpan pada periode ini. Sinkronkan jam atau ketuk Impor Mi."
+            else "Rata-rata per hari tercatat · ${recorded.size}/$count hari · ${days.sumOf { it.sessions.size }} sesi"
         binding.sleepDurationChart.setDays(days, selectedDate)
         val chosenDay = days.first { it.date == selectedDate }
         binding.selectedSleepDay.text = "${date(selectedDate)} · " + (chosenDay.minutes?.let { "${duration(it)} · ${chosenDay.sessions.size} sesi" } ?: "belum ada data")
@@ -139,10 +247,10 @@ class SleepInsightsActivity : AppCompatActivity() {
         val bed = SleepInsights.clockStats(main.map { it.startTimestamp }, zone)
         val wake = SleepInsights.clockStats(main.map { it.endTimestamp }, zone)
         fun stat(view: TextView, title: String, value: SleepInsights.ClockStats?) {
-            view.text = "$title\n${value?.let { clock(it.minute) } ?: "—"}\n" +
-                if (value != null && value.count >= 2) "Variasi ${value.deviation.roundToInt()} menit" else "Variasi —"
+            view.text = "$title · ${value?.let { clock(it.minute) } ?: "—"}\n" +
+                if (value != null && value.count >= 2) "Variasi ±${value.deviation.roundToInt()} menit" else "Variasi —"
         }
-        stat(binding.sleepBedtimeStat, "Mulai tidur", bed)
+        stat(binding.sleepBedtimeStat, "Mulai Tidur", bed)
         stat(binding.sleepWakeStat, "Bangun", wake)
         binding.sleepConsistencyStatus.text = when (main.size) {
             0 -> "Belum ada sesi untuk menghitung pola."
@@ -193,10 +301,10 @@ class SleepInsightsActivity : AppCompatActivity() {
         binding.sleepSessionTimes.text = session?.let {
             "${time(it.startTimestamp, "dd MMM yyyy HH:mm")} – ${time(it.endTimestamp, "dd MMM yyyy HH:mm")}\nSumber: ${if (it.sourceFileId.startsWith("healthconnect:")) "Mi Fitness" else "smartwatch"}"
         } ?: "Pilih hari yang memiliki data atau gunakan pemilih sesi di atas."
-        binding.sleepDeepTotal.text = "Deep\n${session?.takeIf { it.hasStageData }?.let { duration(it.deepMinutes) } ?: "—"}"
-        binding.sleepLightTotal.text = "Light\n${session?.takeIf { it.hasStageData }?.let { duration(it.lightMinutes) } ?: "—"}"
-        binding.sleepRemTotal.text = "REM\n${session?.takeIf { it.hasStageData }?.let { duration(it.remMinutes) } ?: "—"}"
-        binding.sleepAwakeTotal.text = "Terjaga\n${session?.takeIf { it.hasStageData }?.let { duration(it.awakeMinutes) } ?: "—"}"
+        binding.sleepDeepTotal.text = "● Deep · ${session?.takeIf { it.hasStageData }?.let { duration(it.deepMinutes) } ?: "—"}"
+        binding.sleepLightTotal.text = "● Light · ${session?.takeIf { it.hasStageData }?.let { duration(it.lightMinutes) } ?: "—"}"
+        binding.sleepRemTotal.text = "● REM · ${session?.takeIf { it.hasStageData }?.let { duration(it.remMinutes) } ?: "—"}"
+        binding.sleepAwakeTotal.text = "● Terjaga · ${session?.takeIf { it.hasStageData }?.let { duration(it.awakeMinutes) } ?: "—"}"
         binding.sleepTimelineStatus.text = if (session == null) "Belum ada timeline untuk hari ini." else "Membaca waktu fase…"
         if (session == null) return
         stageJob = lifecycleScope.launch {

@@ -4,110 +4,93 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:layout_marginBottom="8dp"
-    android:background="@drawable/bg_card"
-    android:orientation="horizontal"
+    android:background="@drawable/bg_wf_item_inactive"
     android:gravity="center_vertical"
+    android:minHeight="60dp"
+    android:orientation="horizontal"
     android:padding="12dp">
-
-    <FrameLayout
-        android:layout_width="44dp"
-        android:layout_height="52dp"
-        android:background="@drawable/bg_watch_bezel"
-        android:padding="2dp">
-
-        <ImageView
-            android:id="@+id/imgWfIcon"
-            android:layout_width="22dp"
-            android:layout_height="22dp"
-            android:layout_gravity="center"
-            android:src="@drawable/ic_watch"
-            app:tint="@color/on_surface_variant" />
-    </FrameLayout>
 
     <LinearLayout
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginStart="12dp"
         android:layout_weight="1"
+        android:layout_marginEnd="10dp"
         android:orientation="vertical">
 
-        <LinearLayout
-            android:layout_width="wrap_content"
+        <TextView
+            android:id="@+id/tvWfName"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
-
-            <TextView
-                android:id="@+id/tvWfName"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Watchface Name"
-                android:textColor="@color/on_surface"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:maxLines="1"
-                android:ellipsize="end" />
-
-            <TextView
-                android:id="@+id/tvWfActiveBadge"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="6dp"
-                android:background="@drawable/bg_chip"
-                android:paddingHorizontal="6dp"
-                android:paddingVertical="2dp"
-                android:text="AKTIF"
-                android:textColor="@color/primary_mint"
-                android:textSize="10sp"
-                android:textStyle="bold"
-                android:visibility="gone" />
-        </LinearLayout>
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="Watchface Name"
+            android:textColor="@color/on_surface"
+            android:textSize="14sp"
+            android:textStyle="bold" />
 
         <TextView
             android:id="@+id/tvWfId"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="2dp"
+            android:ellipsize="end"
+            android:maxLines="1"
             android:text="ID: --"
             android:textColor="@color/on_surface_muted"
-            android:textSize="11sp"
-            android:maxLines="1"
-            android:ellipsize="end" />
+            android:textSize="11sp" />
     </LinearLayout>
 
-    <!-- Action buttons -->
     <LinearLayout
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical">
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
 
-        <Button
-            android:id="@+id/btnApplyWatchface"
-            style="@style/Widget.Material3.Button.TonalButton"
+        <TextView
+            android:id="@+id/tvWfActiveBadge"
             android:layout_width="wrap_content"
-            android:layout_height="36dp"
-            android:backgroundTint="@color/btn_dark_bg"
-            android:minHeight="0dp"
+            android:layout_height="26dp"
+            android:background="@drawable/bg_wf_active_badge"
+            android:gravity="center"
             android:paddingHorizontal="10dp"
+            android:text="AKTIF"
+            android:textColor="@color/primary_mint"
+            android:textSize="10sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnApplyWatchface"
+            style="@style/Widget.Material3.Button"
+            android:layout_width="wrap_content"
+            android:layout_height="30dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:paddingHorizontal="12dp"
             android:paddingVertical="0dp"
             android:text="Pakai"
-            android:textColor="@color/primary_mint"
-            android:textSize="12sp"
-            android:textStyle="bold" />
+            android:textAllCaps="false"
+            android:textColor="@color/on_surface"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            app:backgroundTint="@color/surface_elevated"
+            app:cornerRadius="8dp"
+            app:strokeColor="@color/outline_subtle"
+            app:strokeWidth="1dp" />
 
         <ImageButton
             android:id="@+id/btnDeleteWatchface"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
             android:layout_marginStart="6dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:contentDescription="Hapus Watchface"
-            android:padding="8dp"
+            android:padding="6dp"
             android:src="@drawable/ic_delete"
-            app:tint="@color/btn_coral_stroke"
-            android:visibility="gone" />
+            android:visibility="gone"
+            app:tint="@color/btn_coral_stroke" />
     </LinearLayout>
 
 </LinearLayout>
-

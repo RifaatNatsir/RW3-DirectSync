@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/watchfaceRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/surface_dark">
@@ -10,30 +11,41 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="@color/surface_dark"
-        app:elevation="4dp">
+        app:elevation="0dp">
 
         <LinearLayout
+            android:id="@+id/watchfaceHeaderBar"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="center_vertical"
-            android:minHeight="64dp"
+            android:minHeight="56dp"
             android:orientation="horizontal"
-            android:paddingHorizontal="16dp">
+            android:paddingHorizontal="16dp"
+            android:paddingTop="12dp"
+            android:paddingBottom="8dp">
 
-            <ImageButton
+            <TextView
                 android:id="@+id/btnBack"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
+                android:layout_width="34dp"
+                android:layout_height="34dp"
+                android:background="@drawable/bg_wf_squircle_surface"
+                android:clickable="true"
                 android:contentDescription="Kembali"
-                android:padding="8dp"
-                android:src="@drawable/ic_arrow_back"
-                app:tint="@color/on_surface" />
+                android:focusable="true"
+                android:foreground="?attr/selectableItemBackgroundBorderless"
+                android:gravity="center"
+                android:includeFontPadding="false"
+                android:paddingBottom="2dp"
+                android:text="‹"
+                android:textColor="@color/on_surface"
+                android:textSize="20sp"
+                android:textStyle="bold" />
 
             <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="12dp"
+                android:layout_marginStart="10dp"
+                android:layout_marginEnd="8dp"
                 android:layout_weight="1"
                 android:orientation="vertical">
 
@@ -41,9 +53,11 @@
                     android:id="@+id/tvTitle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
                     android:text="Watchface &amp; Wallpaper"
                     android:textColor="@color/on_surface"
-                    android:textSize="17sp"
+                    android:textSize="18sp"
                     android:textStyle="bold" />
 
                 <TextView
@@ -51,26 +65,36 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="1dp"
-                    android:text="Memeriksa koneksi jam..."
-                    android:textColor="@color/on_surface_variant"
-                    android:textSize="12sp" />
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:text="Redmi Watch 3 · 390×450 AMOLED"
+                    android:textColor="@color/primary_mint"
+                    android:textSize="11sp" />
             </LinearLayout>
 
-            <ImageButton
+            <TextView
                 android:id="@+id/btnRefreshWatchfacesTop"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:background="@drawable/bg_wf_squircle_surface"
+                android:clickable="true"
                 android:contentDescription="Muat Ulang Jam"
-                android:padding="8dp"
-                android:src="@drawable/ic_sync"
-                app:tint="@color/primary_mint" />
+                android:focusable="true"
+                android:foreground="?attr/selectableItemBackgroundBorderless"
+                android:gravity="center"
+                android:paddingHorizontal="12dp"
+                android:text="Muat Ulang"
+                android:textColor="@color/on_surface_variant"
+                android:textSize="11sp"
+                android:textStyle="bold" />
         </LinearLayout>
     </com.google.android.material.appbar.AppBarLayout>
 
     <androidx.core.widget.NestedScrollView
+        android:id="@+id/watchfaceScroll"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:clipToPadding="false"
         android:fillViewport="true"
         app:layout_behavior="@string/appbar_scrolling_view_behavior">
 
@@ -78,156 +102,35 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="16dp">
+            android:paddingHorizontal="16dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="28dp">
 
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="12dp"
-                android:background="@drawable/bg_card"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Desain jam"
-                    android:textColor="@color/on_surface"
-                    android:textSize="14sp"
-                    android:textStyle="bold" />
-
-                <com.google.android.material.textfield.TextInputLayout
-                    android:id="@+id/layoutWatchfaceDesign"
-                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
-                    app:endIconMode="custom"
-                    app:endIconDrawable="@drawable/ic_watchface_expand"
-                    app:endIconContentDescription="Pilih desain jam"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:hint="Pilih watchface">
-                    <com.google.android.material.textfield.TextInputEditText
-                        android:id="@+id/dropdownWatchfaceDesign"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:inputType="none"
-                        android:focusable="false"
-                        android:clickable="true"
-                        android:cursorVisible="false"
-                        android:longClickable="false"
-                        android:textColor="@color/on_surface"
-                        android:textSize="14sp" />
-                </com.google.android.material.textfield.TextInputLayout>
-
-                <TextView
-                    android:id="@+id/tvTemplateStatus"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Pilih desain jam, lalu gunakan foto Anda sebagai latarnya."
-                    android:textColor="@color/on_surface_variant"
-                    android:textSize="12sp" />
-
-                <Button
-                    android:id="@+id/btnPickWatchfaceTemplate"
-                    style="@style/Widget.Material3.Button.TonalButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="48dp"
-                    android:layout_marginTop="8dp"
-                    android:text="Pilih berkas Green Glass asli"
-                    android:textSize="12sp"
-                    android:visibility="gone" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/cardTextAppearance"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="12dp"
-                android:background="@drawable/bg_card"
-                android:orientation="vertical"
-                android:padding="16dp">
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Tampilan angka"
-                    android:textColor="@color/on_surface"
-                    android:textSize="14sp"
-                    android:textStyle="bold" />
-                <Button
-                    android:id="@+id/btnTextColor"
-                    style="@style/Widget.Material3.Button.TonalButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="48dp"
-                    android:layout_marginTop="8dp"
-                    android:text="Warna angka · Asli"
-                    android:textSize="13sp" />
-                <com.google.android.material.switchmaterial.SwitchMaterial
-                    android:id="@+id/switchTextShadow"
-                    android:layout_width="match_parent"
-                    android:layout_height="48dp"
-                    android:text="Bayangan halus"
-                    android:textColor="@color/on_surface"
-                    android:textSize="13sp" />
-                <TextView
-                    android:id="@+id/tvShadowFeather"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Kehalusan bayangan · 3 px"
-                    android:textColor="@color/on_surface_variant"
-                    android:textSize="12sp" />
-                <com.google.android.material.slider.Slider
-                    android:id="@+id/sliderShadowFeather"
-                    android:layout_width="match_parent"
-                    android:layout_height="48dp"
-                    android:contentDescription="Kehalusan bayangan angka"
-                    android:valueFrom="1"
-                    android:valueTo="6"
-                    android:stepSize="1"
-                    android:value="3" />
-            </LinearLayout>
-
-            <!-- Card 1: Redmi Watch 3 AMOLED Preview -->
+            <!-- Card 1: Watch Studio Card (FigCraft Hero Preview + Toolbar + Pick Photo) -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:background="@drawable/bg_card"
                 android:gravity="center_horizontal"
                 android:orientation="vertical"
-                android:padding="16dp">
+                android:padding="14dp">
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Pratinjau Layar Redmi Watch 3"
-                    android:textColor="@color/on_surface"
-                    android:textSize="14sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="2dp"
-                    android:text="Resolusi Asli: 390 × 450 AMOLED Curved"
-                    android:textColor="@color/on_surface_muted"
-                    android:textSize="11sp" />
-
-                <!-- Watch Bezel Frame Container (390:450 ratio: 208dp x 240dp) -->
+                <!-- Redmi Watch 3 Bezel (180dp x 208dp curved AMOLED) -->
                 <FrameLayout
                     android:id="@+id/frameWatchBezel"
-                    android:layout_width="208dp"
-                    android:layout_height="240dp"
-                    android:layout_marginTop="14dp"
-                    android:layout_marginBottom="12dp"
+                    android:layout_width="180dp"
+                    android:layout_height="208dp"
                     android:background="@drawable/bg_watch_bezel"
-                    android:clipToOutline="true"
+                    android:clickable="true"
+                    android:contentDescription="Pratinjau Layar Redmi Watch 3"
+                    android:focusable="true"
                     android:padding="6dp">
 
-                    <!-- Inner Screen (Clipped to curved corners) -->
                     <androidx.cardview.widget.CardView
                         android:layout_width="match_parent"
                         android:layout_height="match_parent"
                         app:cardBackgroundColor="#000000"
-                        app:cardCornerRadius="24dp"
+                        app:cardCornerRadius="31dp"
                         app:cardElevation="0dp">
 
                         <ImageView
@@ -238,157 +141,246 @@
                             android:scaleType="centerCrop"
                             android:visibility="gone" />
 
-                        <!-- Placeholder when no photo is selected -->
+                        <!-- Idle AMOLED Watch Face Preview (when no photo is picked yet) -->
                         <LinearLayout
                             android:id="@+id/layoutPlaceholderPreview"
                             android:layout_width="match_parent"
                             android:layout_height="match_parent"
+                            android:background="@drawable/bg_watch_preview_idle"
                             android:gravity="center"
                             android:orientation="vertical"
-                            android:padding="16dp">
-
-                            <ImageView
-                                android:layout_width="48dp"
-                                android:layout_height="48dp"
-                                android:src="@drawable/ic_photo_library"
-                                app:tint="@color/on_surface_muted" />
+                            android:padding="14dp">
 
                             <TextView
+                                android:id="@+id/tvWatchPlaceholderDate"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:layout_marginTop="10dp"
+                                android:letterSpacing="0.06"
+                                android:text="MIN 15 NOV"
+                                android:textColor="@color/primary_mint"
+                                android:textSize="10sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:id="@+id/tvWatchPlaceholderClock"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:includeFontPadding="false"
+                                android:text="15:48"
+                                android:textColor="@color/on_surface"
+                                android:textSize="38sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:id="@+id/tvWatchPlaceholderHint"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
                                 android:gravity="center"
-                                android:text="Pilih foto untuk melihat pratinjau wallpaper jam"
-                                android:textColor="@color/on_surface_variant"
-                                android:textSize="12sp" />
+                                android:maxLines="2"
+                                android:text="Pilih foto untuk latar jam"
+                                android:textColor="#D1FAE5"
+                                android:textSize="10sp" />
                         </LinearLayout>
                     </androidx.cardview.widget.CardView>
                 </FrameLayout>
 
-                <!-- Photo Adjustment Controls -->
+                <!-- 4-Pill Crop & Text Color Toolbar -->
                 <LinearLayout
                     android:id="@+id/layoutPhotoControls"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
+                    android:layout_marginTop="12dp"
                     android:gravity="center"
-                    android:orientation="horizontal"
-                    android:visibility="gone">
+                    android:orientation="horizontal">
 
-                    <Button
+                    <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnZoomOut"
-                        style="@style/Widget.Material3.Button.TonalButton"
+                        style="@style/Widget.Material3.Button"
                         android:layout_width="wrap_content"
-                        android:layout_height="36dp"
-                        android:backgroundTint="@color/btn_dark_bg"
+                        android:layout_height="32dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:minWidth="0dp"
                         android:minHeight="0dp"
-                        android:paddingHorizontal="12dp"
-                        android:text="Perkecil"
+                        android:paddingHorizontal="10dp"
+                        android:paddingVertical="0dp"
+                        android:text="− Zoom"
+                        android:textAllCaps="false"
                         android:textColor="@color/on_surface"
-                        android:textSize="11sp" />
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="@color/surface_elevated"
+                        app:cornerRadius="9dp"
+                        app:strokeColor="@color/outline_subtle"
+                        app:strokeWidth="1dp" />
 
-                    <Button
+                    <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnZoomIn"
-                        style="@style/Widget.Material3.Button.TonalButton"
+                        style="@style/Widget.Material3.Button"
                         android:layout_width="wrap_content"
-                        android:layout_height="36dp"
-                        android:layout_marginStart="8dp"
-                        android:backgroundTint="@color/btn_dark_bg"
+                        android:layout_height="32dp"
+                        android:layout_marginStart="6dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:minWidth="0dp"
                         android:minHeight="0dp"
-                        android:paddingHorizontal="12dp"
-                        android:text="Perbesar"
+                        android:paddingHorizontal="10dp"
+                        android:paddingVertical="0dp"
+                        android:text="+ Zoom"
+                        android:textAllCaps="false"
                         android:textColor="@color/on_surface"
-                        android:textSize="11sp" />
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="@color/surface_elevated"
+                        app:cornerRadius="9dp"
+                        app:strokeColor="@color/outline_subtle"
+                        app:strokeWidth="1dp" />
 
-                    <Button
+                    <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnResetCrop"
-                        style="@style/Widget.Material3.Button.TonalButton"
+                        style="@style/Widget.Material3.Button"
                         android:layout_width="wrap_content"
-                        android:layout_height="36dp"
-                        android:layout_marginStart="8dp"
-                        android:backgroundTint="@color/btn_dark_bg"
+                        android:layout_height="32dp"
+                        android:layout_marginStart="6dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:minWidth="0dp"
                         android:minHeight="0dp"
-                        android:paddingHorizontal="12dp"
+                        android:paddingHorizontal="10dp"
+                        android:paddingVertical="0dp"
                         android:text="Reset"
+                        android:textAllCaps="false"
                         android:textColor="@color/on_surface_variant"
-                        android:textSize="11sp" />
+                        android:textSize="11sp"
+                        app:backgroundTint="@color/surface_elevated"
+                        app:cornerRadius="9dp"
+                        app:strokeColor="@color/outline_subtle"
+                        app:strokeWidth="1dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnTextColor"
+                        style="@style/Widget.Material3.Button"
+                        android:layout_width="wrap_content"
+                        android:layout_height="32dp"
+                        android:layout_marginStart="6dp"
+                        android:ellipsize="end"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:maxLines="1"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingHorizontal="10dp"
+                        android:paddingVertical="0dp"
+                        android:text="Teks: Asli"
+                        android:textAllCaps="false"
+                        android:textColor="@color/primary_mint"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="@color/pill_mint_bg"
+                        app:cornerRadius="9dp"
+                        app:strokeColor="@color/primary_mint"
+                        app:strokeWidth="1dp" />
                 </LinearLayout>
 
-                <!-- Button Pick Photo -->
-                <Button
+                <!-- Full-width Photo Picker Button -->
+                <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnPickPhoto"
                     style="@style/Widget.Material3.Button"
                     android:layout_width="match_parent"
-                    android:layout_height="48dp"
+                    android:layout_height="42dp"
                     android:layout_marginTop="12dp"
-                    android:backgroundTint="@color/btn_dark_bg"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:minHeight="0dp"
                     android:text="Pilih Foto dari Galeri"
+                    android:textAllCaps="false"
                     android:textColor="@color/primary_mint"
-                    android:textSize="13sp"
+                    android:textSize="12sp"
                     android:textStyle="bold"
-                    app:icon="@drawable/ic_photo_library"
-                    app:iconTint="@color/primary_mint" />
+                    app:backgroundTint="@color/surface_elevated"
+                    app:cornerRadius="12dp"
+                    app:strokeColor="@color/outline_subtle"
+                    app:strokeWidth="1dp" />
             </LinearLayout>
 
-            <!-- Card 2: Install Action & Progress -->
+            <!-- Card 2: Install & Transfer Card -->
             <LinearLayout
                 android:id="@+id/cardInstallAction"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
+                android:layout_marginTop="10dp"
                 android:background="@drawable/bg_card"
                 android:orientation="vertical"
-                android:padding="16dp">
+                android:padding="14dp">
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Pemasangan ke Jam Tangan"
-                    android:textColor="@color/on_surface"
-                    android:textSize="14sp"
-                    android:textStyle="bold" />
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnInstallToWatch"
+                        style="@style/Widget.Material3.Button"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_weight="1"
+                        android:enabled="false"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:maxLines="1"
+                        android:minHeight="0dp"
+                        android:text="Pasang Wallpaper ke Jam"
+                        android:textAllCaps="false"
+                        android:textColor="@color/on_surface"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="@color/btn_emerald_bg"
+                        app:cornerRadius="12dp"
+                        app:strokeColor="@color/btn_emerald_stroke"
+                        app:strokeWidth="1dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnExportWatchface"
+                        style="@style/Widget.Material3.Button"
+                        android:layout_width="56dp"
+                        android:layout_height="44dp"
+                        android:layout_marginStart="8dp"
+                        android:contentDescription="Simpan berkas watchface (.bin)"
+                        android:enabled="false"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingHorizontal="0dp"
+                        android:text=".BIN"
+                        android:textAllCaps="false"
+                        android:textColor="@color/on_surface_variant"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="@color/surface_elevated"
+                        app:cornerRadius="12dp"
+                        app:strokeColor="@color/outline_subtle"
+                        app:strokeWidth="1dp" />
+                </LinearLayout>
 
                 <TextView
                     android:id="@+id/tvInstallWarning"
-                    android:layout_width="wrap_content"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:text="Pastikan jam berada dekat dengan HP selama proses pengiriman data berlangsung."
-                    android:textColor="@color/on_surface_variant"
-                    android:textSize="12sp" />
-
-                <Button
-                    android:id="@+id/btnExportWatchface"
-                    style="@style/Widget.Material3.Button.TonalButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="48dp"
-                    android:layout_marginTop="12dp"
-                    android:enabled="false"
-                    android:text="Simpan berkas watchface (.bin)"
-                    android:textSize="12sp" />
-
-                <!-- Main Install Button -->
-                <Button
-                    android:id="@+id/btnInstallToWatch"
-                    style="@style/Widget.Material3.Button"
-                    android:layout_width="match_parent"
-                    android:layout_height="50dp"
-                    android:layout_marginTop="12dp"
-                    android:backgroundTint="@color/btn_emerald_bg"
-                    android:enabled="false"
-                    android:text="Pasang Wallpaper ke Jam"
-                    android:textColor="@color/on_surface"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    app:icon="@drawable/ic_cloud_upload"
-                    app:iconTint="@color/on_surface" />
+                    android:layout_marginTop="8dp"
+                    android:text="Pilih foto terlebih dahulu untuk memasang wallpaper."
+                    android:textColor="@color/on_surface_muted"
+                    android:textSize="11sp"
+                    android:visibility="gone" />
 
                 <!-- Upload Progress Layout -->
                 <LinearLayout
                     android:id="@+id/layoutTransferProgress"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
+                    android:layout_marginTop="10dp"
                     android:orientation="vertical"
                     android:visibility="gone">
 
@@ -403,18 +395,21 @@
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:text="Mengirim paket data ke jam..."
-                            android:textColor="@color/primary_mint"
-                            android:textSize="12sp"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:text="Mengirim via SPP Ch5 (0 / 0 KB)"
+                            android:textColor="@color/secondary_cyan"
+                            android:textSize="11sp"
                             android:textStyle="bold" />
 
                         <TextView
                             android:id="@+id/tvTransferProgressPercent"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
                             android:text="0%"
                             android:textColor="@color/on_surface"
-                            android:textSize="12sp"
+                            android:textSize="11sp"
                             android:textStyle="bold" />
                     </LinearLayout>
 
@@ -422,11 +417,11 @@
                         android:id="@+id/progressBarTransfer"
                         style="?android:attr/progressBarStyleHorizontal"
                         android:layout_width="match_parent"
-                        android:layout_height="8dp"
-                        android:layout_marginTop="8dp"
+                        android:layout_height="6dp"
+                        android:layout_marginTop="6dp"
                         android:max="100"
                         android:progress="0"
-                        android:progressTint="@color/primary_mint" />
+                        android:progressDrawable="@drawable/bg_wf_progress" />
 
                     <LinearLayout
                         android:layout_width="match_parent"
@@ -440,21 +435,27 @@
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:text="0 KB / 0 KB"
+                            android:text="Pastikan jam berada dekat HP"
                             android:textColor="@color/on_surface_muted"
-                            android:textSize="11sp" />
+                            android:textSize="10sp" />
 
-                        <Button
+                        <com.google.android.material.button.MaterialButton
                             android:id="@+id/btnCancelTransfer"
-                            style="@style/Widget.Material3.Button.TonalButton"
+                            style="@style/Widget.Material3.Button"
                             android:layout_width="wrap_content"
-                            android:layout_height="32dp"
-                            android:backgroundTint="@color/btn_danger_bg"
+                            android:layout_height="28dp"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:minWidth="0dp"
                             android:minHeight="0dp"
                             android:paddingHorizontal="10dp"
                             android:text="Batal"
+                            android:textAllCaps="false"
                             android:textColor="@color/btn_danger_stroke"
-                            android:textSize="11sp" />
+                            android:textSize="10sp"
+                            android:textStyle="bold"
+                            app:backgroundTint="@color/btn_danger_bg"
+                            app:cornerRadius="8dp" />
                     </LinearLayout>
                 </LinearLayout>
 
@@ -463,16 +464,17 @@
                     android:id="@+id/layoutTransferResult"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:background="@drawable/bg_card"
+                    android:layout_marginTop="10dp"
+                    android:background="@drawable/bg_box_dark"
+                    android:gravity="center_vertical"
                     android:orientation="horizontal"
                     android:padding="12dp"
                     android:visibility="gone">
 
                     <ImageView
                         android:id="@+id/imgTransferResultIcon"
-                        android:layout_width="24dp"
-                        android:layout_height="24dp"
+                        android:layout_width="22dp"
+                        android:layout_height="22dp"
                         android:src="@drawable/ic_check_circle"
                         app:tint="@color/primary_mint" />
 
@@ -489,7 +491,7 @@
                             android:layout_height="wrap_content"
                             android:text="Status Pemasangan"
                             android:textColor="@color/on_surface"
-                            android:textSize="13sp"
+                            android:textSize="12sp"
                             android:textStyle="bold" />
 
                         <TextView
@@ -499,72 +501,83 @@
                             android:layout_marginTop="2dp"
                             android:text="Pesan hasil operasi..."
                             android:textColor="@color/on_surface_variant"
-                            android:textSize="12sp" />
+                            android:textSize="11sp" />
                     </LinearLayout>
 
-                    <Button
+                    <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnRetryTransfer"
-                        style="@style/Widget.Material3.Button.TonalButton"
+                        style="@style/Widget.Material3.Button"
                         android:layout_width="wrap_content"
-                        android:layout_height="34dp"
+                        android:layout_height="30dp"
                         android:layout_marginStart="8dp"
-                        android:backgroundTint="@color/btn_dark_bg"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:minWidth="0dp"
                         android:minHeight="0dp"
                         android:paddingHorizontal="10dp"
                         android:text="Ulangi"
+                        android:textAllCaps="false"
                         android:textColor="@color/primary_mint"
                         android:textSize="11sp"
-                        android:visibility="gone" />
+                        android:visibility="gone"
+                        app:backgroundTint="@color/surface_elevated"
+                        app:cornerRadius="8dp" />
                 </LinearLayout>
             </LinearLayout>
 
-            <!-- Card 3: Impor Paket Watchface Kustom (.bin / .face / .zip) -->
+            <!-- Card 3: Koleksi & Paket Watchface (Combined Import CTA + Installed List) -->
             <LinearLayout
+                android:id="@+id/cardWatchfaceCollection"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
+                android:layout_marginTop="10dp"
                 android:background="@drawable/bg_card"
                 android:orientation="vertical"
-                android:padding="16dp">
+                android:padding="14dp">
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Impor Paket Watchface Kustom"
-                    android:textColor="@color/on_surface"
-                    android:textSize="14sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="2dp"
-                    android:text="Mendukung paket .bin, .face, dan .zip tervalidasi untuk Redmi Watch 3."
-                    android:textColor="@color/on_surface_muted"
-                    android:textSize="11sp" />
-
-                <Button
-                    android:id="@+id/btnImportPackage"
-                    style="@style/Widget.Material3.Button"
+                <LinearLayout
                     android:layout_width="match_parent"
-                    android:layout_height="44dp"
-                    android:layout_marginTop="10dp"
-                    android:backgroundTint="@color/btn_dark_bg"
-                    android:text="Pilih File Paket (.bin / .face / .zip)"
-                    android:textColor="@color/secondary_cyan"
-                    android:textSize="12sp"
-                    app:icon="@drawable/ic_sync"
-                    app:iconTint="@color/secondary_cyan" />
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
 
-                <!-- Selected Package Info Box -->
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:text="Koleksi &amp; Paket Watchface"
+                        android:textColor="@color/on_surface"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/btnImportPackage"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:clickable="true"
+                        android:contentDescription="Impor file paket watchface .bin atau .zip"
+                        android:focusable="true"
+                        android:gravity="center_vertical|end"
+                        android:minHeight="32dp"
+                        android:paddingHorizontal="4dp"
+                        android:text="+ Impor .bin / .zip"
+                        android:textColor="@color/secondary_cyan"
+                        android:textSize="11sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <!-- Selected Custom Package Box (shown when .bin / .face / .zip is imported) -->
                 <LinearLayout
                     android:id="@+id/layoutImportedPackageInfo"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="10dp"
-                    android:background="@drawable/bg_chip"
+                    android:background="@drawable/bg_box_dark"
                     android:orientation="vertical"
-                    android:padding="10dp"
+                    android:padding="12dp"
                     android:visibility="gone">
 
                     <TextView
@@ -585,88 +598,178 @@
                         android:textColor="@color/on_surface_variant"
                         android:textSize="11sp" />
 
-                    <Button
+                    <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnInstallImportedPackage"
                         style="@style/Widget.Material3.Button"
                         android:layout_width="match_parent"
-                        android:layout_height="40dp"
+                        android:layout_height="38dp"
                         android:layout_marginTop="8dp"
-                        android:backgroundTint="@color/btn_cyan_bg"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:minHeight="0dp"
                         android:text="Pasang Paket Ini ke Jam"
+                        android:textAllCaps="false"
                         android:textColor="@color/on_surface"
                         android:textSize="12sp"
-                        android:textStyle="bold" />
+                        android:textStyle="bold"
+                        app:backgroundTint="@color/btn_cyan_bg"
+                        app:cornerRadius="10dp"
+                        app:strokeColor="@color/btn_cyan_stroke"
+                        app:strokeWidth="1dp" />
                 </LinearLayout>
-            </LinearLayout>
-
-            <!-- Card 4: Watchface Terpasang di Jam (Device Storage) -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:layout_marginBottom="32dp"
-                android:background="@drawable/bg_card"
-                android:orientation="vertical"
-                android:padding="16dp">
 
                 <LinearLayout
+                    android:id="@+id/layoutEmptyWatchfaces"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
+                    android:layout_marginTop="8dp"
+                    android:gravity="center_horizontal"
+                    android:orientation="vertical"
+                    android:paddingVertical="10dp">
 
                     <TextView
-                        android:layout_width="0dp"
+                        android:id="@+id/tvEmptyWatchfaces"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="Watchface Tersimpan di Jam"
-                        android:textColor="@color/on_surface"
-                        android:textSize="14sp"
-                        android:textStyle="bold" />
+                        android:gravity="center"
+                        android:text="Belum ada daftar watchface dari jam.\nTekan Muat Ulang untuk membaca memori jam."
+                        android:textColor="@color/on_surface_muted"
+                        android:textSize="12sp" />
 
-                    <Button
+                    <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnRefreshWatchfaceList"
-                        style="@style/Widget.Material3.Button.TonalButton"
+                        style="@style/Widget.Material3.Button"
                         android:layout_width="wrap_content"
                         android:layout_height="32dp"
-                        android:backgroundTint="@color/btn_dark_bg"
+                        android:layout_marginTop="8dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:minWidth="0dp"
                         android:minHeight="0dp"
-                        android:paddingHorizontal="10dp"
-                        android:text="Muat Ulang"
+                        android:paddingHorizontal="14dp"
+                        android:text="Baca Daftar Jam"
+                        android:textAllCaps="false"
                         android:textColor="@color/primary_mint"
-                        android:textSize="11sp" />
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="@color/surface_elevated"
+                        app:cornerRadius="8dp"
+                        app:strokeColor="@color/outline_subtle"
+                        app:strokeWidth="1dp" />
                 </LinearLayout>
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="2dp"
-                    android:text="Daftar tema dan watchface yang aktif atau tersimpan di memori jam."
-                    android:textColor="@color/on_surface_muted"
-                    android:textSize="11sp" />
-
-                <TextView
-                    android:id="@+id/tvEmptyWatchfaces"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:gravity="center"
-                    android:paddingVertical="16dp"
-                    android:text="Belum ada daftar watchface yang dimuat dari jam.\nTekan 'Muat Ulang' untuk membaca dari jam."
-                    android:textColor="@color/on_surface_variant"
-                    android:textSize="12sp" />
 
                 <androidx.recyclerview.widget.RecyclerView
                     android:id="@+id/rvInstalledWatchfaces"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
+                    android:layout_marginTop="8dp"
                     android:nestedScrollingEnabled="false"
                     android:visibility="gone" />
+            </LinearLayout>
+
+            <!-- Card 4: Gaya Watchface & Efek Angka (Secondary Customization Drawer) -->
+            <LinearLayout
+                android:id="@+id/cardTextAppearance"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_card"
+                android:orientation="vertical"
+                android:padding="14dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Gaya Watchface &amp; Efek Teks"
+                    android:textColor="@color/on_surface"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/layoutWatchfaceDesign"
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:hint="Pilih desain jam"
+                    app:endIconContentDescription="Pilih desain jam"
+                    app:endIconDrawable="@drawable/ic_watchface_expand"
+                    app:endIconMode="custom">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/dropdownWatchfaceDesign"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:clickable="true"
+                        android:cursorVisible="false"
+                        android:focusable="false"
+                        android:inputType="none"
+                        android:longClickable="false"
+                        android:textColor="@color/on_surface"
+                        android:textSize="13sp" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <TextView
+                    android:id="@+id/tvTemplateStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="Handwriting · foto Anda dengan desain jam bawaan."
+                    android:textColor="@color/on_surface_muted"
+                    android:textSize="11sp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnPickWatchfaceTemplate"
+                    style="@style/Widget.Material3.Button"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:layout_marginTop="8dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:minHeight="0dp"
+                    android:text="Pilih berkas asli template"
+                    android:textAllCaps="false"
+                    android:textColor="@color/primary_mint"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:visibility="gone"
+                    app:backgroundTint="@color/surface_elevated"
+                    app:cornerRadius="10dp"
+                    app:strokeColor="@color/outline_subtle"
+                    app:strokeWidth="1dp" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/switchTextShadow"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_marginTop="6dp"
+                    android:text="Bayangan halus pada angka"
+                    android:textColor="@color/on_surface"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/tvShadowFeather"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Kehalusan bayangan · 3 px"
+                    android:textColor="@color/on_surface_variant"
+                    android:textSize="11sp" />
+
+                <com.google.android.material.slider.Slider
+                    android:id="@+id/sliderShadowFeather"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:contentDescription="Kehalusan bayangan angka"
+                    android:stepSize="1"
+                    android:value="3"
+                    android:valueFrom="1"
+                    android:valueTo="6"
+                    app:thumbColor="@color/primary_mint"
+                    app:trackColorActive="@color/primary_mint"
+                    app:trackColorInactive="@color/surface_elevated" />
             </LinearLayout>
 
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>
-
