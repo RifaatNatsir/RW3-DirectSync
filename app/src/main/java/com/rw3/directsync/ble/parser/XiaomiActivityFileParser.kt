@@ -11,7 +11,9 @@ object XiaomiActivityFileParser {
         if (id.size != 7) return false
         val flags = id[6].toInt() and 255
         val subtype = (flags and 127) shr 2
-        return if (flags and 128 != 0) flags and 3 == 1 && subtype == 8
+        // For SPORTS the subtype is the sport (1 = outdoor run, 8 = freestyle),
+        // not the summary format. Layout/version validation happens in workout().
+        return if (flags and 128 != 0) flags and 3 == 1
         else (subtype == 0 && flags and 3 == 1) || (subtype == 6 && flags and 3 == 0)
     }
 
@@ -28,7 +30,7 @@ object XiaomiActivityFileParser {
         val timestamp = (b.getInt(0).toLong() and 0xffffffffL) * 1000
         val body = ByteBuffer.wrap(file, 8, file.size - 12).slice().order(ByteOrder.LITTLE_ENDIAN)
         return when {
-            id[6].toInt() and 128 != 0 -> listOf(workout(body, version, source))
+            id[6].toInt() and 128 != 0 -> listOf(workout(body, version, source, (id[6].toInt() and 127) shr 2))
             (id[6].toInt() and 127) shr 2 == 6 -> manual(body, version, source)
             else -> listOf(daily(body, version, source, timestamp))
         }
@@ -81,7 +83,9 @@ object XiaomiActivityFileParser {
         return result
     }
 
-    private fun workout(b: ByteBuffer, version: Int, source: String): ActivityRecordEntity {
+    private fun workout(b: ByteBuffer, version: Int, source: String, subtype: Int): ActivityRecordEntity {
+        if (subtype == 0x16 && version == 2) return outdoorV2(b, source)
+        require(subtype == 8) { "Format ringkasan olahraga belum didukung: $subtype v$version" }
         require(version in listOf(5,7,8,9,10)) { "Versi olahraga belum didukung: $version" }
         val headerSize = when (version) { 5 -> 3; 7 -> 5; else -> 6 }
         val minimumBody = when (version) { 5 -> 64; 7 -> 75; 10 -> 98; else -> 91 }
@@ -101,6 +105,31 @@ object XiaomiActivityFileParser {
             calories = calories.takeIf { valid(header, 3) }, averageHeartRate = hr(avg).takeIf { valid(header, 4) },
             maxHeartRate = hr(max).takeIf { valid(header, 5) }, minHeartRate = hr(min).takeIf { valid(header, 6) },
             sportType = sport.takeIf { valid(header, if (version == 5) 16 else 21) }, sourceFileId = source, formatVersion = version)
+    }
+
+    /** RW3 outdoor v2: six validity bytes, sport code first, then timed/distance fields.
+     * Unlike freestyle v7, calories/HR are not immediately after active seconds.
+     * Layout checked against the complete CRC-valid RW3 record and the v4 outdoor layout.
+     */
+    private fun outdoorV2(b: ByteBuffer, source: String): ActivityRecordEntity {
+        require(b.remaining() == 138) { "Panjang ringkasan outdoor v2 tidak sesuai" }
+        val header = ByteArray(6).also { b.get(it) }
+        val base = b.position()
+        val sport = b.short.toInt() and 65535
+        val start = seconds(b); val end = seconds(b); val active = b.int
+        require(valid(header, 1) && valid(header, 2) && start > 0 && end >= start && end - start <= 7 * 86400000L) { "Waktu olahraga tidak valid" }
+        require(!valid(header, 3) || active.toLong() in 0..((end - start) / 1000)) { "Durasi olahraga tidak valid" }
+        val calories = b.getShort(base + 24).toInt() and 65535
+        val avg = b.get(base + 44).toInt() and 255
+        val max = b.get(base + 45).toInt() and 255
+        val min = b.get(base + 46).toInt() and 255
+        return ActivityRecordEntity(id = "workout:$source", category = "workout", timestamp = start,
+            endTimestamp = end, activeSeconds = active.takeIf { valid(header, 3) },
+            calories = calories.takeIf { valid(header, 7) },
+            averageHeartRate = hr(avg).takeIf { valid(header, 13) },
+            maxHeartRate = hr(max).takeIf { valid(header, 14) },
+            minHeartRate = hr(min).takeIf { valid(header, 15) },
+            sportType = sport.takeIf { valid(header, 0) }, sourceFileId = source, formatVersion = 2)
     }
 
     private fun valid(header: ByteArray, slot: Int) = header[slot / 8].toInt() and (1 shl (7 - slot % 8)) != 0

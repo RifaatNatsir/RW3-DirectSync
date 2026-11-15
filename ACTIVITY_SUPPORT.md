@@ -101,3 +101,16 @@ Referensi struktur protokol (implementasi Kotlin dibuat di proyek ini):
 - [Gadgetbridge ManualSamplesParser](https://codeberg.org/Freeyourgadget/Gadgetbridge/src/branch/master/app/src/main/java/nodomain/freeyourgadget/gadgetbridge/service/devices/xiaomi/activity/impl/ManualSamplesParser.java)
 
 Rekaman Bluetooth/bugreport tidak disertakan dalam APK atau fixture tes.
+
+
+## Perbaikan riwayat olahraga (15 November 2026)
+
+Penyaring sebelumnya membatasi SPORTS summary ke subtype 8 (Latihan Bebas). Subtype pada SPORTS membedakan jenis/layout olahraga. Berkas lari RW3 yang diperiksa memakai subtype 0x16 versi 2, dengan kode olahraga 1 di dalam payload. Semua SPORTS summary sekarang diteruskan ke pemilihan parser, dengan pemeriksaan versi, panjang, CRC, validity bitmap, dan waktu. Layout yang belum dikenal ditolak, bukan dibaca menggunakan offset Latihan Bebas. Paket detail/GPS tetap tidak diperlakukan sebagai ringkasan. Tidak ada rekaman olahraga yang dibuat berdasarkan angka yang diketik pengguna.
+
+Coba lagi khusus Olahraga meminta daftar PAST tanpa memicu TODAY/alternate yang dapat memulai burst tidur. File tidur dorongan yang terpotong tidak dimasukkan ulang ke antrean percobaan khusus olahraga. Sinkronisasi semua data tetap memakai urutan lengkap yang ada.
+
+Referensi identitas berkas: [XiaomiActivityFileId](https://github.com/Freeyourgadget/Gadgetbridge/blob/master/app/src/main/java/nodomain/freeyourgadget/gadgetbridge/service/devices/xiaomi/activity/XiaomiActivityFileId.java).
+
+Parser outdoor RW3 subtype 0x16/v2 ditambahkan secara khusus: header validity 6 byte, kode olahraga sebelum timestamp, serta offset kalori/HR yang berbeda dari freestyle. Validasi fisik memakai berkas ringkasan asli dari jam, sedangkan fixture unit test dibuat sintetis. Versi/jenis lain tidak otomatis dianggap memiliki layout freestyle. Tidak ada perubahan skema database.
+
+Verifikasi ADB setelah restart biasa smartwatch: daftar PAST menawarkan tiga ringkasan. Sesi outdoor v2 berhasil disimpan dan tampil sebagai Lari Luar Ruang dengan durasi aktif 17:22. Berkas mencatat 12 November 2026 pukul 19:11:12 (+08), berbeda dari tanggal 11 November yang disebutkan saat pelaporan; timestamp sumber dipertahankan. Jarak 2.199 meter dapat dicocokkan pada ringkasan biner, tetapi belum menjadi kolom/metrik tampilan aplikasi. 146 unit test lulus. APK diperbarui di HP tanpa perubahan skema database.

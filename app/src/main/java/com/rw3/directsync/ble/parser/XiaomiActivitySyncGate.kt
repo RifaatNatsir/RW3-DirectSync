@@ -7,19 +7,21 @@ class XiaomiActivitySyncGate(private val quietMillis: Long = 3_000, private val 
     private var awaiting: Request? = null
     private var responseDeadline = 0L
     private var lastTraffic = Long.MIN_VALUE
+    private var pastOnly = false
     var timedOutRequest: Request? = null
         private set
     @Volatile var running = false
         private set
 
-    @Synchronized fun start(now: Long) {
+    @Synchronized fun start(now: Long, pastOnly: Boolean = false) {
         reset()
+        this.pastOnly = pastOnly
         running = true
-        pending = Request.TODAY
+        pending = if (pastOnly) Request.PAST else Request.TODAY
         lastTraffic = now
     }
     @Synchronized fun reset() {
-        pending = null; awaiting = null; responseDeadline = 0; lastTraffic = Long.MIN_VALUE; running = false; timedOutRequest = null
+        pending = null; awaiting = null; responseDeadline = 0; lastTraffic = Long.MIN_VALUE; running = false; timedOutRequest = null; pastOnly = false
     }
     @Synchronized fun onTraffic(now: Long) { lastTraffic = now }
     @Synchronized fun onList(subtype: Int, now: Long) {
@@ -31,7 +33,7 @@ class XiaomiActivitySyncGate(private val quietMillis: Long = 3_000, private val 
     }
     private fun after(request: Request): Request? = when (request) {
         Request.TODAY -> Request.PAST
-        Request.PAST -> Request.ALTERNATE_TODAY
+        Request.PAST -> if (pastOnly) null else Request.ALTERNATE_TODAY
         Request.ALTERNATE_TODAY -> null
     }
     @Synchronized fun delayMillis(now: Long): Long {

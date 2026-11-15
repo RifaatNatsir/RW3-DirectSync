@@ -78,6 +78,41 @@ class XiaomiActivityFileParserTest {
         assertEquals(308, record.sportType); assertEquals(1700001800000, record.endTimestamp)
     }
 
+    @Test fun outdoorSummariesAreClassifiedButDetailsAreNot() {
+        for (flag in listOf(0x85, 0xd9)) {
+            val id = file(2, flag, ByteArray(138)).copyOfRange(0, 7)
+            assertTrue(XiaomiActivityFileParser.accepts(id))
+            assertEquals(setOf(com.rw3.directsync.sync.SyncMetric.WORKOUTS), com.rw3.directsync.sync.SyncMetric.forFile(id))
+        }
+        assertFalse(XiaomiActivityFileParser.accepts(file(2, 0xd8, ByteArray(138)).copyOfRange(0, 7)))
+        assertFalse(XiaomiActivityFileParser.accepts(file(2, 0xda, ByteArray(138)).copyOfRange(0, 7)))
+    }
+
+    private fun outdoor(): ByteArray {
+        val body = ByteArray(138)
+        body[0] = 0xf7.toByte(); body[1] = 0xbf.toByte()
+        ByteBuffer.wrap(body).order(ByteOrder.LITTLE_ENDIAN).apply {
+            putShort(6, 1); putInt(8, 1700000000); putInt(12, 1700001000); putInt(16, 900)
+            putInt(24, 2500); putShort(30, 100); put(50, 150.toByte()); put(51, 180.toByte()); put(52, 80)
+        }
+        return body
+    }
+    @Test fun outdoorV2ReadsItsOwnOffsetsRatherThanFreestyleLayout() {
+        val r = XiaomiActivityFileParser.parse(file(2, 0xd9, outdoor())).single()
+        assertEquals(1, r.sportType); assertEquals(900, r.activeSeconds); assertEquals(100, r.calories)
+        assertEquals(150, r.averageHeartRate); assertEquals(180, r.maxHeartRate); assertEquals(80, r.minHeartRate)
+        assertEquals(1700000000000, r.timestamp); assertEquals(1700001000000, r.endTimestamp)
+    }
+    @Test fun outdoorV2ValidityAndTimeChecksAreEnforced() {
+        val body = outdoor(); body[0] = 0x60; body[1] = 0
+        val r = XiaomiActivityFileParser.parse(file(2, 0xd9, body)).single()
+        assertNull(r.sportType); assertNull(r.activeSeconds); assertNull(r.calories); assertNull(r.averageHeartRate)
+        val invalid = outdoor(); ByteBuffer.wrap(invalid).order(ByteOrder.LITTLE_ENDIAN).putInt(16, 99999)
+        assertThrows(IllegalArgumentException::class.java) { XiaomiActivityFileParser.parse(file(2, 0xd9, invalid)) }
+        assertThrows(IllegalArgumentException::class.java) { XiaomiActivityFileParser.parse(file(2, 0xd9, ByteArray(137))) }
+        assertThrows(IllegalArgumentException::class.java) { XiaomiActivityFileParser.parse(file(7, 0x85, workout())) }
+    }
+
     @Test fun invalidWorkoutDurationRejected() {
         val body = workout(); ByteBuffer.wrap(body).order(ByteOrder.LITTLE_ENDIAN).putInt(13, 99999)
         assertThrows(IllegalArgumentException::class.java) { XiaomiActivityFileParser.parse(file(7, 0xa1, body)) }

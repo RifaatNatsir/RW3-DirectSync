@@ -31,6 +31,8 @@ class XiaomiWearProtocolEngine(authKeyHex: String) {
         const val CMD_TYPE_SYSTEM = 2
         const val CMD_SUBTYPE_BATTERY = 1
         const val CMD_SUBTYPE_DEVICE_INFO = 2
+        const val CMD_SUBTYPE_FIND_PHONE = 17
+        const val CMD_SUBTYPE_FIND_WATCH = 18
 
         const val CMD_TYPE_NOTIFICATION = 7
         const val CMD_SUBTYPE_NOTIFICATION_SEND = 0
@@ -217,6 +219,11 @@ class XiaomiWearProtocolEngine(authKeyHex: String) {
     /**
      * Builds Activity / Sleep Fetch Past Command: `Command(type = 8, subtype = 2)`
      */
+    fun buildFindDeviceCommand(phone: Boolean, start: Boolean): ByteArray {
+        val system = ByteArrayOutputStream().apply { writeUint32Field(5, if (start) 0 else 1) }.toByteArray()
+        return buildCommandProto(CMD_TYPE_SYSTEM, if (phone) CMD_SUBTYPE_FIND_PHONE else CMD_SUBTYPE_FIND_WATCH, 4, system)
+    }
+
     fun buildFetchActivityPastCommand(): ByteArray {
         return buildCommandProto(CMD_TYPE_HEALTH, CMD_SUBTYPE_ACTIVITY_FETCH_PAST)
     }
@@ -504,6 +511,8 @@ class XiaomiWearProtocolEngine(authKeyHex: String) {
     }
 
     sealed class DecodedWatchEvent {
+        data class FindPhone(val start: Boolean) : DecodedWatchEvent()
+        data class FindWatch(val start: Boolean) : DecodedWatchEvent()
         data class WatchNonceReceived(val step3ResponseCommand: ByteArray) : DecodedWatchEvent()
         data object AuthSucceeded : DecodedWatchEvent()
         data class RealtimeHeartRate(val bpm: Int, val steps: Int?, val calories: Int?) : DecodedWatchEvent()
@@ -555,6 +564,17 @@ class XiaomiWearProtocolEngine(authKeyHex: String) {
             }
 
             CMD_TYPE_SYSTEM -> {
+                if (subtype == CMD_SUBTYPE_FIND_PHONE || subtype == CMD_SUBTYPE_FIND_WATCH) {
+                    val system = topFields.firstOrNull { it.fieldNumber == 4 && it.wireType == 2 }?.bytesVal
+                    // The watch can omit the scalar's default zero inside a present System.
+                    // A missing System, however, can be an ACK and must not start an alarm.
+                    val value = system?.let { parseProtoFields(it)
+                        .firstOrNull { field -> field.fieldNumber == 5 && field.wireType == 0 }?.intVal
+                        ?: if (subtype == CMD_SUBTYPE_FIND_PHONE) 0L else null }
+                    if (value == 0L || value == 1L) return if (subtype == CMD_SUBTYPE_FIND_PHONE)
+                        DecodedWatchEvent.FindPhone(value == 0L) else DecodedWatchEvent.FindWatch(value == 0L)
+                    return DecodedWatchEvent.RawCommand(type, subtype)
+                }
                 if (subtype == CMD_SUBTYPE_BATTERY) {
                     val sysBytes = topFields.firstOrNull { it.fieldNumber == 4 && it.wireType == 2 }?.bytesVal
                     if (sysBytes != null) {

@@ -120,6 +120,7 @@ class BleSyncService : LifecycleService() {
         const val ACTION_MEDIA_PAUSE = "com.rw3.directsync.action.MEDIA_PAUSE"
         const val ACTION_MEDIA_NEXT = "com.rw3.directsync.action.MEDIA_NEXT"
         const val ACTION_MEDIA_PREV = "com.rw3.directsync.action.MEDIA_PREV"
+        const val ACTION_STOP_FIND_PHONE = "com.rw3.directsync.action.STOP_FIND_PHONE"
         const val ACTION_QUERY_WATCHFACES = "com.rw3.directsync.action.QUERY_WATCHFACES"
 
         const val EXTRA_MAC_ADDRESS = "extra_mac_address"
@@ -415,6 +416,8 @@ class BleSyncService : LifecycleService() {
     @Synchronized
     fun pauseForMiFitness(): Boolean {
         if (watchfaceTransferManager.isTransferActive()) return false
+        if (findingWatch.value) findWatch(false)
+        if (phoneFinderRinging.value) stopPhoneFinder()
         connectionMode.pause()
         userRequestedStop = true
         syncStatuses.cancel()
@@ -541,6 +544,8 @@ class BleSyncService : LifecycleService() {
             }
 
             ACTION_STOP_SYNC -> {
+                if (findingWatch.value) findWatch(false)
+                if (phoneFinderRinging.value) stopPhoneFinder()
                 syncStatuses.cancel()
                 appendLog("Layanan dihentikan oleh pengguna.")
                 userRequestedStop = true
@@ -591,6 +596,10 @@ class BleSyncService : LifecycleService() {
             ACTION_MEDIA_NEXT -> sendMediaNext()
             ACTION_MEDIA_PREV -> sendMediaPrevious()
             ACTION_QUERY_WATCHFACES -> queryWatchfaceList()
+            ACTION_STOP_FIND_PHONE -> {
+                stopPhoneFinder()
+                if (targetMacAddress == null) stopSelf(startId)
+            }
         }
         return START_REDELIVER_INTENT
     }
@@ -599,6 +608,8 @@ class BleSyncService : LifecycleService() {
         if (instance === this) {
             instance = null
         }
+        stopPhoneFinder(notifyWatch = false)
+        findWatch(false)
         activityHandler.removeCallbacksAndMessages(null)
         mainHandler.removeCallbacks(hrSensorCutOffRunnable)
         userRequestedStop = true
@@ -880,6 +891,13 @@ class BleSyncService : LifecycleService() {
     @Synchronized
     private fun closeSppSocket() {
         _watchfaceUploadReady.value = false
+        mainHandler.post {
+            mainHandler.removeCallbacks(stopFindingWatchTask)
+            mainHandler.removeCallbacks(finderPulse)
+            _findingWatch.value = false
+            _finderStatus.value = "Koneksi jam terputus. Hubungkan kembali untuk mencari perangkat."
+            if (phoneFinderRinging.value) stopPhoneFinder(notifyWatch = false)
+        }
         if (syncStatuses.active().isNotEmpty()) syncStatuses.interrupt("Koneksi terputus sebelum sinkronisasi selesai. Coba lagi.")
         activityConnectionGeneration++
         activityHandler.removeCallbacks(autoHistorySync)
@@ -900,6 +918,57 @@ class BleSyncService : LifecycleService() {
         sppOutputStream = null
         sppSocket = null
         watchfaceTransferManager.onConnectionLost()
+    }
+
+    private val phoneFinder by lazy { PhoneFinder(this, { stopPhoneFinder() }, ::appendLog) }
+    val phoneFinderRinging get() = phoneFinder.ringing
+    private val _findingWatch = MutableStateFlow(false)
+    val findingWatch = _findingWatch.asStateFlow()
+    private val _finderStatus = MutableStateFlow("Hubungkan jam untuk menggunakan pencarian dua arah.")
+    val finderStatus = _finderStatus.asStateFlow()
+    private val stopFindingWatchTask = Runnable { findWatch(false) }
+    private var finderPulseCount = 0
+    private val finderPulse = object : Runnable {
+        override fun run() {
+            if (!_findingWatch.value || !_watchfaceUploadReady.value || connectionMode.paused.value) return
+            if (finderPulseCount >= 6) return
+            val id = 5_253_300 + finderPulseCount++
+            forwardNotification(id, packageName, "DirectSync", "Cari jam", "HP sedang mencari jam ini. Sinyal ${finderPulseCount}/6.", key = "finder:$id")
+            _finderStatus.value = "Pengingat pencarian dikirim ke jam. Getaran mengikuti pengaturan notifikasi dan Jangan Ganggu jam."
+            mainHandler.postDelayed(this, 5_000)
+        }
+    }
+
+    fun findWatch(start: Boolean): String? {
+        if (start && (connectionMode.paused.value || !_watchfaceUploadReady.value)) return "Hubungkan DirectSync ke jam terlebih dahulu."
+        if (start && watchfaceTransferManager.isTransferActive()) return "Tunggu unggah watchface selesai."
+        mainHandler.removeCallbacks(stopFindingWatchTask)
+        mainHandler.removeCallbacks(finderPulse)
+        if (!start && _watchfaceUploadReady.value) repeat(finderPulseCount) {
+            val id = 5_253_300 + it
+            dismissNotificationOnWatch(id, packageName, "finder:$id")
+        }
+        finderPulseCount = 0
+        if (_watchfaceUploadReady.value) protocolEngine?.let {
+            dispatchXiaomiProtoCommand(if (start) "Cari jam: mulai" else "Cari jam: hentikan", it.buildFindDeviceCommand(phone = false, start = start))
+        }
+        _findingWatch.value = start
+        _finderStatus.value = if (start) "Permintaan pencarian dikirim ke jam. Berhenti otomatis dalam 30 detik." else "Pencarian jam dihentikan."
+        if (start) {
+            mainHandler.postDelayed(stopFindingWatchTask, 30_000)
+            // RW3 firmware may ignore native find-watch. Use its supported notification path
+            // only if it has not acknowledged native finding within 1.5 seconds.
+            mainHandler.postDelayed(finderPulse, 1_500)
+        }
+        return null
+    }
+
+    fun stopPhoneFinder(notifyWatch: Boolean = true) {
+        phoneFinder.stop()
+        if (notifyWatch && _watchfaceUploadReady.value) protocolEngine?.let {
+            dispatchXiaomiProtoCommand("Cari HP: hentikan", it.buildFindDeviceCommand(phone = true, start = false))
+        }
+        appendLog("Pencarian HP dihentikan.")
     }
 
     private fun executeConnectStrategy(device: BluetoothDevice, strategyIndex: Int) {
@@ -1932,13 +2001,33 @@ class BleSyncService : LifecycleService() {
                 }
             }
 
+            is XiaomiWearProtocolEngine.DecodedWatchEvent.FindPhone -> {
+                appendLog("Cari HP: permintaan jam start=${event.start}")
+                mainHandler.post {
+                    if (event.start && _watchfaceUploadReady.value && !connectionMode.paused.value) {
+                        appendLog("Smartwatch meminta pencarian HP.")
+                        phoneFinder.start()
+                    } else if (!event.start) stopPhoneFinder(notifyWatch = false)
+                }
+            }
+            is XiaomiWearProtocolEngine.DecodedWatchEvent.FindWatch -> {
+                appendLog("Cari jam: respons jam start=${event.start}")
+                mainHandler.post {
+                    mainHandler.removeCallbacks(finderPulse)
+                    if (!event.start) {
+                        mainHandler.removeCallbacks(stopFindingWatchTask)
+                        _findingWatch.value = false
+                        _finderStatus.value = "Jam menghentikan pencarian."
+                    } else if (_findingWatch.value) _finderStatus.value = "Jam merespons pencarian. Ketuk Hentikan jika sudah ditemukan."
+                }
+            }
             is XiaomiWearProtocolEngine.DecodedWatchEvent.BatteryReport -> {
                 _batteryLevel.value = event.levelPercent
                 appendLog("Level Baterai: ${event.levelPercent}%")
             }
 
             is XiaomiWearProtocolEngine.DecodedWatchEvent.ActivityFileIdsReceived -> {
-                appendLog("Menerima ${event.fileIds.size} file riwayat tidur/aktivitas dari jam.")
+                appendLog("Menerima ${event.fileIds.size} file riwayat dari jam (daftar=${event.subtype}).")
                 for (id in event.fileIds) {
                     appendLog("File jam: ${id.toHex()} (sleep=${XiaomiSleepFileParser.isSleepFile(id)})")
                     if (SyncMetric.forFile(id).any { it in historyMetrics })
@@ -1949,6 +2038,9 @@ class BleSyncService : LifecycleService() {
             }
 
             is XiaomiWearProtocolEngine.DecodedWatchEvent.NotificationDismissed -> {
+                if (event.id in 5_253_300..5_253_305) mainHandler.post {
+                    if (_findingWatch.value) findWatch(false)
+                }
                 appendLog("[Notifikasi] Notifikasi #${event.id} ditutup oleh pengguna di smartwatch.")
             }
 
@@ -2010,7 +2102,8 @@ class BleSyncService : LifecycleService() {
     private fun retryActivityFile() {
         val exhaustedId = activeActivityFileId
         val partialId = activityTransfer.currentFileId
-        if (partialId != null && activeActivityFileId?.contentEquals(partialId) != true) {
+        if (partialId != null && activeActivityFileId?.contentEquals(partialId) != true &&
+            SyncMetric.forFile(partialId).any { it in historyMetrics }) {
             activityRequests.offer(partialId, priority = true)
             appendLog("File dorongan jam terpotong; menjadwalkan unduh ulang ${partialId.toHex()}.")
         }
@@ -2416,7 +2509,9 @@ class BleSyncService : LifecycleService() {
         val directIds = if (retryFailed) metricRetryFiles(metrics, syncStatuses.entries.value)
             .mapNotNull { SyncStatusRepository.fileId(it) } else emptyList()
         syncStatuses.begin(metrics, fullScan = directIds.isEmpty())
-        if (directIds.isEmpty()) activitySyncGate.start(now)
+        // Workout summaries are offered by PAST. TODAY/alternate may start a large sleep
+        // burst, blocking precisely the targeted recovery the user requested.
+        if (directIds.isEmpty()) activitySyncGate.start(now, pastOnly = metrics == setOf(SyncMetric.WORKOUTS))
         else {
             activitySyncGate.reset()
             directIds.forEach { activityRequests.offer(it, priority = true) }

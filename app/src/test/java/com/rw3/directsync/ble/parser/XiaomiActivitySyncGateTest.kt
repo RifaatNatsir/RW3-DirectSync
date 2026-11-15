@@ -4,6 +4,23 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class XiaomiActivitySyncGateTest {
+    @Test fun workoutRetryOnlyRequestsPastAndNeverStartsSleepBurst() {
+        val gate = XiaomiActivitySyncGate(100, 500)
+        gate.start(0, pastOnly = true)
+        assertEquals(XiaomiActivitySyncGate.Request.PAST, gate.takeRequest(100))
+        gate.onList(2, 120)
+        assertNull(gate.takeRequest(220))
+        assertTrue(gate.canDownload(220))
+        gate.reset(); gate.start(1000)
+        assertEquals(XiaomiActivitySyncGate.Request.TODAY, gate.takeRequest(1100))
+    }
+    @Test fun workoutListTimeoutDoesNotTriggerAlternateSleepRequest() {
+        val gate = XiaomiActivitySyncGate(100, 500)
+        gate.start(0, pastOnly = true); gate.takeRequest(100)
+        assertNull(gate.takeRequest(600))
+        assertEquals(XiaomiActivitySyncGate.Request.PAST, gate.timedOutRequest)
+        assertTrue(gate.canDownload(600))
+    }
     @Test fun lostListResponseIsReportedWithoutTreatingAnEmptyListAsAFailure() {
         val gate = XiaomiActivitySyncGate(100, 500)
         gate.start(0); gate.takeRequest(100); gate.onList(1, 120); gate.takeRequest(220)
